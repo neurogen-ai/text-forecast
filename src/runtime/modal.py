@@ -8,7 +8,6 @@ from typing import Any
 
 import modal
 
-from config.env import Env
 from data.preprocess.embed_modal import ModalEmbedder
 from data.preprocess.pipeline import PreprocessJob, run_preprocess_pipeline
 from data.sources.base import DataSource
@@ -93,7 +92,7 @@ class ModalRuntime:
 
     def __init__(
         self,
-        env: Env,
+        env: "Env",
         project: str,
         raw_volume: str,
         staged_volume: str,
