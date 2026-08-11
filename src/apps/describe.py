@@ -1,18 +1,15 @@
+from __future__ import annotations
+
 from datetime import datetime
 from logging import getLogger
-from typing import NamedTuple
+from pathlib import Path
 
 import polars as pl
 import typer
 
-from config import env
+from config.env import load_env
+from runtime import LocalRuntime
 from utils.logging import setup_logger
-
-
-class DateTimeVals(NamedTuple):
-    year: int
-    month: int
-    day: int
 
 
 logger = getLogger(__name__)
@@ -21,11 +18,21 @@ _ = setup_logger(logger)
 app = typer.Typer(pretty_exceptions_enable=False)
 
 
+def _make_runtime(runtime_name: str) -> LocalRuntime:
+    if runtime_name == "local":
+        return LocalRuntime()
+    raise typer.BadParameter(
+        f"Runtime {runtime_name!r} is not supported in v1.1. "
+        "Modal runtime is planned for v1.2."
+    )
+
+
 @app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     dataset: str = typer.Option("", "--dataset", "-d", help="Dataset name"),
     start_time: datetime | None = typer.Option(
-        None, "--start-time", "-s", help="Start date/time to filter by, inlcusive"
+        None, "--start-time", "-s", help="Start date/time to filter by, inclusive"
     ),
     end_time: datetime | None = typer.Option(
         None, "--end-time", "-e", help="End date/time to filter by, exclusive"
@@ -42,19 +49,74 @@ def main(
         "-b",
         help="Borders of buckets to describe count by, creates list of inclusive upper limits",
     ),
-    filter: bool = typer.Option(False),
-):
-    lf = pl.scan_parquet(list((env.STAGED_LOC / dataset).glob("*.par*")))
+    filter_expr: str = typer.Option(
+        "",
+        "--filter-expr",
+        help="Raw Polars expression string applied to the dataset",
+    ),
+    min_cited_by_count: int | None = typer.Option(
+        None,
+        "--min-cited-by-count",
+        help="Minimum cited_by_count filter",
+    ),
+    min_referenced_works: int | None = typer.Option(
+        None,
+        "--min-referenced-works",
+        help="Minimum referenced_works list length filter",
+    ),
+    runtime_name: str = typer.Option(
+        "local",
+        "--runtime",
+        "-r",
+        help="Execution backend (only 'local' is supported in v1.1)",
+    ),
+    tracking_uri: str | None = typer.Option(
+        None, "--tracking-uri", help="Override MLflow tracking URI"
+    ),
+    raw_loc: Path | None = typer.Option(
+        None, "--raw-loc", help="Override raw data location"
+    ),
+    staged_loc: Path | None = typer.Option(
+        None, "--staged-loc", help="Override staged data location"
+    ),
+    artifact_loc: Path | None = typer.Option(
+        None, "--artifact-loc", help="Override artifact storage location"
+    ),
+) -> None:
+    env = load_env(
+        overrides={
+            k: v
+            for k, v in {
+                "tracking_uri": tracking_uri,
+                "raw_loc": raw_loc,
+                "staged_loc": staged_loc,
+                "artifact_loc": artifact_loc,
+            }.items()
+            if v is not None
+        }
+    )
+    runtime = _make_runtime(runtime_name)
+    source = runtime.get_source(root=env.staged_loc, name=dataset)
+    source_path = runtime.maybe_download(source)
+    logger.info(f"Describing dataset at {source_path} (staged_loc={env.staged_loc})")
+
+    lf = pl.scan_parquet(list(source_path.glob("*.par*")))
 
     if start_time is not None:
         lf = lf.filter(pl.col(time_col) >= start_time)
     if end_time is not None:
         lf = lf.filter(pl.col(time_col) < end_time)
-    if filter:
-        lf = lf.filter(
-            (pl.col("cited_by_count") >= 1)
-            & (pl.col("referenced_works").list.len() >= 5)
-        )
+
+    if filter_expr:
+        lf = lf.filter(eval(filter_expr))
+    else:
+        exprs: list[pl.Expr] = []
+        if min_cited_by_count is not None:
+            exprs.append(pl.col("cited_by_count") >= min_cited_by_count)
+        if min_referenced_works is not None:
+            exprs.append(pl.col("referenced_works").list.len() >= min_referenced_works)
+        if exprs:
+            lf = lf.filter(pl.all_horizontal(exprs))
 
     n_buckets = len(buckets)
     for col in describe_cols:
