@@ -1,26 +1,18 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 from datetime import datetime
 from logging import getLogger
 from pathlib import Path
 
-import polars as pl
 import typer
-from rich.progress import (
-    BarColumn,
-    Progress,
-    TextColumn,
-    TimeElapsedColumn,
-    TimeRemainingColumn,
-)
 
 from config.env import Env, load_env
-from data.preprocess import clean_step, tokenise_step
-from data.preprocess.embed import TextEmbedder
-from runtime import LocalRuntime, Runtime
+from data.preprocess.pipeline import PreprocessJob
+from data.sources import LocalStagedSource
+from data.sources.base import DataSource
+from runtime import build_runtime
 from utils.logging import setup_logger
 
 logger = getLogger(__name__)
@@ -35,16 +27,6 @@ def _parse_embedder_config(value: str) -> dict[str, object]:
     if not value:
         return {}
     return json.loads(value)
-
-
-def _make_runtime(runtime_name: str, env: Env) -> Runtime:
-    del env
-    if runtime_name == "local":
-        return LocalRuntime()
-    raise typer.BadParameter(
-        f"Runtime {runtime_name!r} is not supported in v1.1. "
-        "Modal runtime is planned for v1.2."
-    )
 
 
 @app.callback(invoke_without_command=True)
@@ -194,7 +176,7 @@ def main(
         "local",
         "--runtime",
         "-r",
-        help="Execution backend (only 'local' is supported in v1.1)",
+        help="Execution backend (local or modal)",
     ),
     tracking_uri: str | None = typer.Option(
         None,
@@ -242,22 +224,29 @@ def main(
             if v is not None
         }
     )
-    runtime = _make_runtime(runtime_name, env)
 
-    os.environ["POLARS_MAX_THREADS"] = f"{max_threads}"
+    if runtime_name == "modal":
+        if "modal" not in env.runtime:
+            raise typer.BadParameter(
+                "--runtime modal requires a [runtime.modal] section in "
+                "config/config.toml. See config/config.example.toml."
+            )
+        if embedder_device:
+            logger.warning(
+                "--embedder-device is ignored when using --runtime modal; "
+                "the Modal GPU class always uses cuda."
+            )
 
-    def measure_lf(lf: pl.LazyFrame, run: bool = False) -> float:
-        if run:
-            return lf.select(pl.len()).collect(engine="streaming").item()
-        return float("nan")
+    runtime = build_runtime(runtime_name, env)
 
     origin_path = Path(origin)
     if origin_path.exists():
-        source_path = origin_path
+        origin_source: DataSource = LocalStagedSource(
+            path=origin_path.parent, name=origin_path.name
+        )
         base_name = origin_path.stem
     else:
-        source = runtime.get_source(root=env.raw_loc, name=origin)
-        source_path = runtime.maybe_download(source)
+        origin_source = runtime.get_source(root=env.raw_loc, name=origin)
         base_name = origin
 
     if not name:
@@ -267,181 +256,42 @@ def main(
     else:
         destination = runtime.get_source(root=env.staged_loc, name=name)
 
-    destination_path = destination.resolve()
-    os.makedirs(destination_path, exist_ok=True)
-    logger.info(f"Preprocessing {source_path} -> {destination_path}")
+    embedder_kwargs = _parse_embedder_config(embedder_config)
+    if embedder_device:
+        embedder_kwargs["device"] = embedder_device
+    if embedder_batch_size:
+        embedder_kwargs["batch_size"] = embedder_batch_size
 
-    lf_whole: pl.LazyFrame = pl.scan_parquet(
-        list(source_path.glob("*.par*")), extra_columns="ignore"
+    job = PreprocessJob(
+        origin=origin_source,
+        destination=destination,
+        clean_cols=clean_cols,
+        clean_levels=clean_levels,
+        clean_min_len=clean_min_len,
+        tokeniser=tokeniser,
+        tokenise_cols=tokenise_cols,
+        embedder_key=embedder,
+        embedder_kwargs=embedder_kwargs,
+        embed_cols=embed_cols,
+        n_partitions=n_partitions,
+        rows_per_part=rows_per_part,
+        compression_level=compression_level,
+        start_date=start_date,
+        end_date=end_date,
+        field_id=field_id,
+        drop_na_cols=drop_na_cols,
+        languages=languages,
+        types=types,
+        filt_license=filt_license,
+        replace_non_permissive_cols=replace_non_permissive_cols,
+        dry_run=dry_run,
+        max_threads=max_threads,
+        runtime_name=runtime_name,
+        params=dict(ctx.params),
     )
 
-    if filt_license:
-        lf_whole = lf_whole.filter(pl.col("is_license_safe"))
-    else:
-        logger.warning("Including non-permissive licenses")
-
-    if start_date is not None:
-        lf_whole = lf_whole.filter(pl.col("publication_date") >= start_date)
-    else:
-        logger.warning("No start date set")
-
-    if end_date is not None:
-        lf_whole = lf_whole.filter(pl.col("publication_date") < end_date)
-    else:
-        logger.warning("No end date set")
-
-    if field_id:
-        lf_whole = lf_whole.filter(pl.col("field_id").is_in(field_id))
-    else:
-        logger.warning("No field id filter set")
-
-    if languages:
-        lf_whole = lf_whole.filter(pl.col("language").is_in(languages))
-    else:
-        logger.warning("No Language filters set")
-
-    if types:
-        lf_whole = lf_whole.filter(pl.col("type").is_in(types))
-    else:
-        logger.warning("No document type filters set")
-
-    n_rows: float = measure_lf(lf_whole, True)
-    if n_partitions:
-        rows_per_part = math.ceil(n_rows / n_partitions)
-    elif rows_per_part:
-        n_partitions = math.ceil(n_rows / rows_per_part)
-
-    lf_whole = lf_whole.with_row_index("idx").with_columns(
-        (pl.col("idx") // rows_per_part).clip(0, n_partitions - 1).alias("part")
-    )
-
-    progress_bar = Progress(
-        TextColumn("[bold blue] {task.description}", justify="left"),
-        BarColumn(bar_width=40),
-        TextColumn("[task.completed]{task.completed}/{task.total}"),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        TimeElapsedColumn(),
-        TextColumn("<"),
-        TimeRemainingColumn(),
-        speed_estimate_period=60.0 * 10,
-    )
-    progress_bar.start()
-    progress = progress_bar.add_task("Rows", total=int(n_rows))
-
-    if dry_run:
-        lf_whole = lf_whole.slice(0, 500)
-
-    embedder_instance: TextEmbedder | None = None
-    if embedder:
-        config = _parse_embedder_config(embedder_config)
-        if embedder_device:
-            config["device"] = embedder_device
-        if embedder_batch_size:
-            config["batch_size"] = embedder_batch_size
-        embedder_instance = runtime.get_embedder(key=embedder, **config)
-
-    def embed_batch(series: pl.Series) -> pl.Series:
-        assert embedder_instance is not None
-        texts = [t if isinstance(t, str) else "" for t in series.to_list()]
-        vectors = embedder_instance.encode(texts)
-        return pl.Series(
-            vectors,
-            dtype=pl.Array(pl.Float32, width=embedder_instance.output_dim),
-        )
-
-    for i in range(n_partitions):
-        lf = lf_whole.filter(pl.col("part") == i).drop(["idx", "part"])
-
-        for col in replace_non_permissive_cols:
-            logger.info(f"Replacing non-permissive {col} with None")
-            lf = lf.with_columns(
-                pl.when(pl.col("is_license_safe") == False)
-                .then(pl.lit(None, dtype=lf.schema[col]))
-                .otherwise(pl.col(col))
-                .alias(col)
-            )
-
-        if clean_cols:
-            for col, level, min_len in zip(clean_cols, clean_levels, clean_min_len):
-                l1 = measure_lf(lf)
-                lf = clean_step(
-                    lf=lf,
-                    col=col,
-                    min_len=min_len,
-                    level=level,
-                )
-                l2 = measure_lf(lf)
-                logger.info(f"Dropped {l1 - l2:,.0f} in {col} at clean lvl {level}")
-        elif i == 0:
-            logger.warning("No cols selected for cleaning")
-
-        if drop_na_cols:
-            for col in drop_na_cols:
-                lf = lf.drop_nulls(subset=col)
-        elif i == 0:
-            logger.warning("No columns set to drop nulls")
-
-        if embedder_instance:
-            if i == 0:
-                logger.info(f"Embedding {', '.join(embed_cols)} with {embedder}")
-            lf = (
-                lf.drop_nulls(embed_cols)
-                .with_columns(
-                    to_embed=pl.concat_str(
-                        [pl.col(col) for col in embed_cols],
-                        separator=" ",
-                    )
-                )
-                .with_columns(
-                    pl.col("to_embed")
-                    .map_batches(
-                        embed_batch,
-                        return_dtype=pl.Array(
-                            pl.Float32, width=embedder_instance.output_dim
-                        ),
-                    )
-                    .alias(f"{' '.join(embed_cols)}_embedding")
-                )
-                .drop("to_embed")
-            )
-
-        if tokeniser:
-            if i == 0:
-                logger.info(f"Tokenising {', '.join(tokenise_cols)} with {tokeniser}")
-            lf = tokenise_step(
-                lf=lf,
-                tokeniser_path=tokeniser,
-                columns=tokenise_cols,
-            )
-
-        if dry_run:
-            print(lf.collect())
-            break
-
-        output_fname = destination_path / f"part_{i}.parquet"
-        lf.sink_parquet(
-            output_fname,
-            statistics=True,
-            compression="zstd",
-            compression_level=compression_level,
-        )
-        n_written = (
-            pl.scan_parquet(output_fname)
-            .select(pl.len())
-            .collect(engine="streaming")
-            .item()
-        )
-        progress_bar.update(progress, advance=n_written)
-
-    metadata = {k: str(v) for k, v in ctx.params.items()}
-    metadata["env"] = {
-        "tracking_uri": env.tracking_uri,
-        "raw_loc": str(env.raw_loc),
-        "staged_loc": str(env.staged_loc),
-        "artifact_loc": str(env.artifact_loc),
-    }
-    with open(destination_path / "metadata.json", "w") as f:
-        json.dump(metadata, f)
+    result = runtime.run_preprocess(job)
+    logger.info(f"Preprocessed dataset written to {result.resolve()}")
 
 
 if __name__ == "__main__":
