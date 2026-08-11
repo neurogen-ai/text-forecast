@@ -1,7 +1,7 @@
+from __future__ import annotations
+
 import math
 import os
-import shutil
-from datetime import datetime
 from logging import getLogger
 from pathlib import Path
 
@@ -11,18 +11,51 @@ import typer
 from rich.progress import (
     BarColumn,
     Progress,
-    TaskID,
     TextColumn,
     TimeElapsedColumn,
     TimeRemainingColumn,
 )
+from sklearn.cluster import DBSCAN
 
-from data.preprocess import clean_step, tokenise_step
+from config.env import load_env
+from runtime import LocalRuntime
 from utils import export_parquet, setup_logger
 
 logger = getLogger(__name__)
 _ = setup_logger(logger)
 app = typer.Typer(pretty_exceptions_enable=False)
+
+
+def _make_runtime(runtime_name: str) -> LocalRuntime:
+    if runtime_name == "local":
+        return LocalRuntime()
+    raise typer.BadParameter(
+        f"Runtime {runtime_name!r} is not supported in v1.1. "
+        "Modal runtime is planned for v1.2."
+    )
+
+
+def _resolve_output_path(
+    output_value: str,
+    input_path: Path | None,
+    input_dataset: str | None,
+    runtime: LocalRuntime,
+    staged_loc: Path,
+) -> Path:
+    """Resolve --output as explicit path or staged dataset name."""
+    if not output_value:
+        if input_path is not None:
+            return input_path.parent / f"{input_path.name}-engineered"
+        if input_dataset:
+            return runtime.get_source(
+                root=staged_loc, name=f"{input_dataset}-engineered"
+            ).resolve()
+        raise ValueError("Cannot derive output without input_path or input_dataset")
+
+    candidate = Path(output_value)
+    if candidate.is_absolute() or "/" in output_value:
+        return candidate
+    return runtime.get_source(root=staged_loc, name=output_value).resolve()
 
 
 def run_dbscan_on_chunk(df_chunk: pl.DataFrame) -> pl.DataFrame:
@@ -69,6 +102,7 @@ def run_dbscan_on_chunk(df_chunk: pl.DataFrame) -> pl.DataFrame:
 
 @app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     input_path: Path = typer.Option(
         "",
         "--input-path",
@@ -82,7 +116,7 @@ def main(
         "",
         "--output",
         "-o",
-        help='Name of exported dataset, defaults to "origin"-engineered',
+        help='Explicit output path or staged dataset name; defaults to "<input>-engineered"',
     ),
     len_cols: list[str] = typer.Option(
         [],
@@ -104,29 +138,62 @@ def main(
         "--dry-run",
         help="Test/Dry run with 500 sample slice of data",
     ),
+    runtime_name: str = typer.Option(
+        "local",
+        "--runtime",
+        "-r",
+        help="Execution backend (only 'local' is supported in v1.1)",
+    ),
+    tracking_uri: str | None = typer.Option(
+        None, "--tracking-uri", help="Override MLflow tracking URI"
+    ),
+    raw_loc: Path | None = typer.Option(
+        None, "--raw-loc", help="Override raw data location"
+    ),
+    staged_loc: Path | None = typer.Option(
+        None, "--staged-loc", help="Override staged data location"
+    ),
+    artifact_loc: Path | None = typer.Option(
+        None, "--artifact-loc", help="Override artifact storage location"
+    ),
 ) -> None:
-    # safety checks
     assert input_path or input_dataset, "Provide path to or name of an input dataset"
 
-    # setup
+    env = load_env(
+        overrides={
+            k: v
+            for k, v in {
+                "tracking_uri": tracking_uri,
+                "raw_loc": raw_loc,
+                "staged_loc": staged_loc,
+                "artifact_loc": artifact_loc,
+            }.items()
+            if v is not None
+        }
+    )
+    runtime = _make_runtime(runtime_name)
+
     if input_path:
         origin = input_path
-    if input_dataset:
-        origin = ""
-    assert origin, "Origin must be set"
-    logger.info(f"Loading data from {origin}")
+    else:
+        source = runtime.get_source(root=env.staged_loc, name=input_dataset)
+        origin = runtime.maybe_download(source)
+
+    output = _resolve_output_path(
+        output_value=output_path,
+        input_path=input_path if input_path else None,
+        input_dataset=input_dataset if input_dataset else None,
+        runtime=runtime,
+        staged_loc=env.staged_loc,
+    )
+    os.makedirs(str(output), exist_ok=False)
+
+    logger.info(f"Engineering {origin} to {output}")
+
     lf_whole = pl.scan_parquet(list(origin.glob("*.par*")))
 
     if dry_run:
         lf_whole = lf_whole.slice(0, 50)
-
-    if not output_path:
-        output = origin.parent / f"{origin.name}-engineered"
-    else:
-        output = Path(output_path)
-    os.makedirs(str(output), exist_ok=False)
-
-    logger.info(f"Engineering {origin} to {output}")
 
     progress_bar = Progress(
         TextColumn("[bold blue] {task.description}", justify="left"),
@@ -136,7 +203,7 @@ def main(
         TimeElapsedColumn(),
         TextColumn("<"),
         TimeRemainingColumn(),
-        speed_estimate_period=60.0 * 10,  # mins
+        speed_estimate_period=60.0 * 10,
     )
     progress_bar.start()
     n_rows = lf_whole.select(pl.len()).collect(engine="streaming").item()
@@ -147,10 +214,8 @@ def main(
     lf_whole = lf_whole.with_row_index("idx").with_columns(
         (pl.col("idx") // rows_per_part).clip(0, n_partitions - 1).alias("part")
     )
-    # 3. Sink each part
     for i in range(n_partitions):
         lf = lf_whole.filter(pl.col("part") == i).drop(["idx", "part"])
-        # Customisable operations
         for col in len_cols:
             msg = lambda: logger.info(f"Calculating len of {col}, dtype: {dtype}")
             dtype = lf.schema[col]
@@ -164,7 +229,6 @@ def main(
                 logger.error(f"Len operation not supported for {dtype}")
                 raise TypeError(f"Len operation not supported for {dtype}")
 
-        # Fixed operations
         if years_to_first:
             lf = lf.with_columns(
                 counts_by_year_delta=(
@@ -227,5 +291,5 @@ def main(
                 compression_level=1,
             )
             n_written = pl.scan_parquet(output_fname).select(pl.len()).collect(engine="streaming").item()
-            progress_bar.update(progress,advance=n_written)
-            progress_bar.update(part_progress,advance=1)
+            progress_bar.update(progress, advance=n_written)
+            progress_bar.update(part_progress, advance=1)
