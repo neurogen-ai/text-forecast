@@ -172,11 +172,11 @@ def main(
         "--clear-temp",
         help="Delete temp files, whether successful or not",
     ),
-    runtime_name: str = typer.Option(
-        "local",
+    runtime_name: str | None = typer.Option(
+        None,
         "--runtime",
         "-r",
-        help="Execution backend (local or modal)",
+        help="Execution backend (local or modal; defaults to [runtime].default)",
     ),
     tracking_uri: str | None = typer.Option(
         None,
@@ -224,6 +224,9 @@ def main(
             if v is not None
         }
     )
+
+    if runtime_name is None:
+        runtime_name = env.runtime.get("default", "local")
 
     if runtime_name == "modal":
         if "modal" not in env.runtime:
