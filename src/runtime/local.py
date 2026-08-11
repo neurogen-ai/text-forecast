@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from data.preprocess.embed import get_embedder
+from data.preprocess.pipeline import PreprocessJob, run_preprocess_pipeline
 from data.sources import LocalStagedSource
 from data.sources.base import DataSource
 
@@ -26,6 +27,9 @@ class LocalRuntime:
 
     def maybe_upload(self, source: DataSource, local_path: Path) -> None:
         return None
+
+    def run_preprocess(self, job: PreprocessJob) -> DataSource:
+        return run_preprocess_pipeline(job, self)
 
 
 Runtime.register(LocalRuntime)
