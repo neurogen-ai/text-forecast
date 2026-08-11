@@ -2,12 +2,12 @@
 import tomllib
 import typer
 
-from apps import describe, engineer, eval, train #preprocess, train
+from apps import describe, engineer, eval, preprocess, train
 from config.loader import available_experiments, resolve_experiment_name
 from utils.get_root_dir import get_root_dir
 
 app = typer.Typer(pretty_exceptions_enable=False)
-#app.add_typer(preprocess, name="preprocess")
+app.add_typer(preprocess, name="preprocess")
 app.add_typer(describe, name="describe")
 app.add_typer(engineer, name="engineer")
 app.add_typer(eval, name="eval")
