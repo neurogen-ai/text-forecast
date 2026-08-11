@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
-from data.preprocess.pipeline import PreprocessJob
 from data.sources.base import DataSource
 
 
@@ -31,4 +30,4 @@ class Runtime(Protocol):
 
     def maybe_upload(self, source: DataSource, local_path: Path) -> None: ...
 
-    def run_preprocess(self, job: PreprocessJob) -> DataSource: ...
+    def run_preprocess(self, job: "PreprocessJob") -> DataSource: ...
