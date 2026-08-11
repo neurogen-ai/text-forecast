@@ -7,7 +7,7 @@ CLI overrides.  No module-level singletons or PEP 562 shims remain.
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,7 @@ class Env:
     raw_loc: Path
     staged_loc: Path
     artifact_loc: Path
+    runtime: dict[str, Any] = field(default_factory=dict)
 
 
 def _load_toml() -> dict[str, Any]:
@@ -31,10 +32,11 @@ def _load_toml() -> dict[str, Any]:
 
 
 def load_env(overrides: dict[str, Any] | None = None) -> Env:
-    """Load ``[env]`` from ``config/config.toml`` and apply CLI overrides.
+    """Load ``[env]`` and ``[runtime]`` from ``config/config.toml`` and apply CLI overrides.
 
-    All four keys get CLI override flags.  ``staged_loc`` is validated to
-    exist at load time.
+    All four ``[env]`` keys get CLI override flags.  ``staged_loc`` is validated to
+    exist at load time.  The ``[runtime]`` section is returned verbatim for the
+    runtime factory to consume.
     """
     overrides = overrides or {}
     data = _load_toml()
@@ -59,4 +61,5 @@ def load_env(overrides: dict[str, Any] | None = None) -> Env:
                 "artifact_loc", env_data.get("artifact_loc", "/tmp/artifacts")
             )
         ),
+        runtime=data.get("runtime", {}),
     )
