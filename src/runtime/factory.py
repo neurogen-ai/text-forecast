@@ -29,6 +29,7 @@ def build_runtime(runtime_name: str, env: Env) -> Runtime:
 
         modal_config = env.runtime.get("modal", {})
         return ModalRuntime(
+            env=env,
             project=modal_config.get("project", "citef"),
             raw_volume=modal_config.get("raw_volume", "openalex-raw"),
             staged_volume=modal_config.get("staged_volume", "openalex-staged"),
