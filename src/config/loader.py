@@ -9,6 +9,7 @@ from typing import Any
 
 from utils.get_root_dir import get_root_dir
 
+from .env import Env
 from .experiment import Experiment
 from .runtime import RunContext
 
@@ -57,8 +58,10 @@ def _load_module_from_path(module_name: str, path: Path) -> Any:
     return module
 
 
-def load_experiment(name: str, runtime: RunContext) -> Experiment[Any]:
-    """Import an experiment module and call its ``build(runtime)`` entry point."""
+def load_experiment(
+    name: str, runtime: RunContext, *, env: Env
+) -> Experiment[Any]:
+    """Import an experiment module and call its ``build(runtime, env)`` entry point."""
     module_path = _EXPERIMENTS_DIR / f"{name}.py"
     if not module_path.exists():
         raise ValueError(
@@ -75,9 +78,11 @@ def load_experiment(name: str, runtime: RunContext) -> Experiment[Any]:
             f"Experiment {name!r} must declare a string 'experiment_name'"
         )
     if not callable(build):
-        raise ValueError(f"Experiment {name!r} must define a callable 'build'")
+        raise ValueError(
+            f"Experiment {name!r} must define a callable 'build(runtime, env)'"
+        )
 
-    experiment = build(runtime)
+    experiment = build(runtime, env)
     if not isinstance(experiment, Experiment):
         raise ValueError(
             f"Experiment {name!r}.build() must return an Experiment instance"
@@ -85,7 +90,9 @@ def load_experiment(name: str, runtime: RunContext) -> Experiment[Any]:
     return experiment
 
 
-def load_experiment_from_path(path: Path, runtime: RunContext) -> Experiment[Any]:
+def load_experiment_from_path(
+    path: Path, runtime: RunContext, *, env: Env
+) -> Experiment[Any]:
     """Load an experiment module from an arbitrary path (used by eval's
     downloaded experiment-file artifact).
     """
@@ -101,9 +108,11 @@ def load_experiment_from_path(path: Path, runtime: RunContext) -> Experiment[Any
     if not isinstance(experiment_name, str):
         raise ValueError("Experiment file must declare a string 'experiment_name'")
     if not callable(build):
-        raise ValueError("Experiment file must define a callable 'build'")
+        raise ValueError(
+            "Experiment file must define a callable 'build(runtime, env)'"
+        )
 
-    experiment = build(runtime)
+    experiment = build(runtime, env)
     if not isinstance(experiment, Experiment):
         raise ValueError("Experiment file build() must return an Experiment instance")
     return experiment

@@ -15,7 +15,7 @@ import polars as pl
 import torch
 from torch.utils.data import DataLoader
 
-from config.env import ARTIFACT_LOC, STAGED_LOC, TRACKING_URI
+from config.env import Env
 from config.experiment import Experiment
 from config.runtime import RunContext
 from data.datasets.graph_dataset import GraphDataset, GraphDatasetConfig
@@ -33,14 +33,14 @@ from training.tracking import BinaryClassificationTracker
 experiment_name: str = "General-2-graph-embed"
 
 
-def build(runtime: RunContext) -> Experiment[CitationGraphDatasetOutput]:
-    """Build the full experiment object graph from the injected runtime."""
+def build(runtime: RunContext, env: Env) -> Experiment[CitationGraphDatasetOutput]:
+    """Build the full experiment object graph from the injected runtime and env."""
     device = runtime.device
     dtype = runtime.dtype
     subsample = runtime.subsample
 
     source = LocalStagedSource(
-        path=STAGED_LOC,
+        path=env.staged_loc,
         name="1920-2000-lowercase-2-embedded",
     )
 
@@ -195,8 +195,8 @@ def build(runtime: RunContext) -> Experiment[CitationGraphDatasetOutput]:
     )
 
     checkpoints = MlflowCheckpointProcessor(
-        artifact_loc=Path(ARTIFACT_LOC),
-        tracking_uri=TRACKING_URI,
+        artifact_loc=env.artifact_loc,
+        tracking_uri=env.tracking_uri,
         experiment_name=experiment_name,
     )
 

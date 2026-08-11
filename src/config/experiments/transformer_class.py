@@ -19,7 +19,7 @@ import polars as pl
 import torch
 from torch.utils.data import DataLoader
 
-from config.env import ARTIFACT_LOC, STAGED_LOC, TRACKING_URI
+from config.env import Env
 from config.experiment import Experiment
 from config.runtime import RunContext
 from data.datasets.text_token_dataset import TextTokenDataset, TextTokenDatasetConfig
@@ -47,14 +47,14 @@ _NUM_WORKERS = 2
 _EPOCHS = 8
 
 
-def build(runtime: RunContext) -> Experiment[TextTokenDatasetOutput]:
+def build(runtime: RunContext, env: Env) -> Experiment[TextTokenDatasetOutput]:
     """Build the basic Transformer classifier experiment."""
     device = runtime.device
     dtype = runtime.dtype
     subsample = runtime.subsample
 
     source = LocalStagedSource(
-        path=STAGED_LOC,
+        path=env.staged_loc,
         name=_SOURCE_NAME,
     )
 
@@ -163,8 +163,8 @@ def build(runtime: RunContext) -> Experiment[TextTokenDatasetOutput]:
     )
 
     checkpoints = MlflowCheckpointProcessor(
-        artifact_loc=Path(ARTIFACT_LOC),
-        tracking_uri=TRACKING_URI,
+        artifact_loc=env.artifact_loc,
+        tracking_uri=env.tracking_uri,
         experiment_name=experiment_name,
     )
 

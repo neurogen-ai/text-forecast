@@ -172,7 +172,7 @@ def main(
 
     root_obj = ctx.find_root().obj
     experiment_name: str = root_obj["experiment_name"]
-    exp = load_experiment(experiment_name, runtime)
+    exp = load_experiment(experiment_name, runtime, env=env)
 
     if runtime.compile_mode:
         exp.model.compile(

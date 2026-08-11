@@ -153,7 +153,7 @@ def main(
     experiment_file_path = processor.download_experiment_file(
         run_id=run_id, dest=CHECKPOINT_DIR
     )
-    exp = load_experiment_from_path(experiment_file_path, runtime)
+    exp = load_experiment_from_path(experiment_file_path, runtime, env=env)
 
     checkpoint = processor.load(
         ref=CheckpointRef(run_id=run_id, epoch=epoch),
