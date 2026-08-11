@@ -20,7 +20,8 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 
-from data.preprocess import clean_step, tokenise_step
+from data.preprocess.clean import main as clean_step
+from data.preprocess.tokenise import main as tokenise_step
 from data.sources.base import DataSource
 from runtime.base import Runtime, TextEmbedder
 
