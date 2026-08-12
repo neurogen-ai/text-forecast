@@ -17,7 +17,7 @@ from apps.source_args import (
 )
 from config.env import Env, load_env
 from data.preprocess.pipeline import PreprocessJob
-from data.sources import SourceBackend
+from data.sources import LocalSourceBackend, SourceBackend
 from data.sources.base import DataSource
 from runtime import build_runtime
 from utils.logging import setup_logger
@@ -41,7 +41,7 @@ def _resolve_origin(
 ) -> tuple[DataSource, str]:
     """Map a CLI origin (path or dataset name) to a DataSource and base name."""
     origin_path = Path(origin)
-    if origin_path.exists() and source_backend.name == "local":
+    if origin_path.exists() and isinstance(source_backend, LocalSourceBackend):
         base_dir = source_backend.base_dir
         try:
             name = str(origin_path.relative_to(base_dir))

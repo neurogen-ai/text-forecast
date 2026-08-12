@@ -23,6 +23,7 @@ from apps.source_args import (
     source_volume_arg,
 )
 from builders import build_eval_example_progress
+from data.sources import LocalSourceBackend
 from config.env import load_env
 from config.loader import load_experiment_from_path
 from config.runtime import RunContext
@@ -117,7 +118,7 @@ def main(
         source_volume=source_volume,
     )
 
-    if source_backend_obj.name != "local":
+    if not isinstance(source_backend_obj, LocalSourceBackend):
         raise typer.BadParameter(
             "eval currently requires --source-backend local "
             "for local prediction output"
