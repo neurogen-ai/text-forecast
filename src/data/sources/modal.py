@@ -1,29 +1,36 @@
-"""Modal volume-backed data source."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-from .base import DataSource
+from .base import DataSource, SourceBackend
+from .registry import register_source_backend
 
 
-@dataclass(frozen=True, kw_only=True)
-class ModalVolumeSource:
-    """In-container path resolver for a dataset stored on a Modal volume.
+@dataclass(frozen=True)
+class ModalDataSource:
+    """Modal volume dataset located at ``/modal/<volume>/<name>``."""
 
-    The runtime mounts Modal volumes under ``/modal/<volume_label>``.  This
-    source returns the fully-qualified in-container path so that Polars can
-    read and write parquet files transparently, whether the job runs in the
-    cloud or in a local Modal container.
-    """
-
-    volume_label: str
-    path: str
+    volume: str
     name: str
 
+    @property
+    def backend(self) -> str:
+        return "modal"
+
     def resolve(self) -> Path:
-        return Path("/modal") / self.volume_label / self.path / self.name
+        return Path("/modal") / self.volume / self.name
 
 
-DataSource.register(ModalVolumeSource)
+@register_source_backend("modal")
+class ModalSourceBackend:
+    """Modal volume source backend."""
+
+    name = "modal"
+
+    def __init__(self, config: dict[str, Any]) -> None:
+        self.volume = config["volume"]
+
+    def get_source(self, name: str) -> DataSource:
+        return ModalDataSource(volume=self.volume, name=name)
