@@ -7,8 +7,15 @@ from pathlib import Path
 import polars as pl
 import typer
 
+from apps.source_args import (
+    build_source_backend_from_cli,
+    source_backend_arg,
+    source_base_dir_arg,
+    source_opt_arg,
+    source_volume_arg,
+)
 from config.env import load_env
-from runtime import LocalRuntime
+from runtime import build_runtime
 from utils.logging import setup_logger
 
 
@@ -16,15 +23,6 @@ logger = getLogger(__name__)
 _ = setup_logger(logger)
 
 app = typer.Typer(pretty_exceptions_enable=False)
-
-
-def _make_runtime(runtime_name: str) -> LocalRuntime:
-    if runtime_name == "local":
-        return LocalRuntime()
-    raise typer.BadParameter(
-        f"Runtime {runtime_name!r} is not supported in v1.1. "
-        "Modal runtime is planned for v1.2."
-    )
 
 
 @app.callback(invoke_without_command=True)
@@ -68,16 +66,14 @@ def main(
         "local",
         "--runtime",
         "-r",
-        help="Execution backend (only 'local' is supported in v1.1)",
+        help="Execution backend (local or modal)",
     ),
+    source_backend: str | None = source_backend_arg(),
+    source_opts: list[str] = source_opt_arg(),
+    source_base_dir: Path | None = source_base_dir_arg(),
+    source_volume: str | None = source_volume_arg(),
     tracking_uri: str | None = typer.Option(
         None, "--tracking-uri", help="Override MLflow tracking URI"
-    ),
-    raw_loc: Path | None = typer.Option(
-        None, "--raw-loc", help="Override raw data location"
-    ),
-    staged_loc: Path | None = typer.Option(
-        None, "--staged-loc", help="Override staged data location"
     ),
     artifact_loc: Path | None = typer.Option(
         None, "--artifact-loc", help="Override artifact storage location"
@@ -88,17 +84,41 @@ def main(
             k: v
             for k, v in {
                 "tracking_uri": tracking_uri,
-                "raw_loc": raw_loc,
-                "staged_loc": staged_loc,
                 "artifact_loc": artifact_loc,
             }.items()
             if v is not None
         }
     )
-    runtime = _make_runtime(runtime_name)
-    source = runtime.get_source(root=env.staged_loc, name=dataset)
-    source_path = runtime.maybe_download(source)
-    logger.info(f"Describing dataset at {source_path} (staged_loc={env.staged_loc})")
+
+    source_backend_obj = build_source_backend_from_cli(
+        env=env,
+        source_backend=source_backend,
+        source_opts=source_opts,
+        source_base_dir=source_base_dir,
+        source_volume=source_volume,
+    )
+
+    if runtime_name is None:
+        runtime_name = env.runtime.get("default", "local")
+    runtime = build_runtime(runtime_name, env)
+
+    supported = getattr(runtime, "supported_source_backends", {"local"})
+    if source_backend_obj.name not in supported:
+        raise typer.BadParameter(
+            f"Runtime {runtime_name!r} does not support source backend "
+            f"{source_backend_obj.name!r}"
+        )
+
+    if runtime_name == "modal":
+        raise typer.BadParameter(
+            "Modal runtime is not yet supported for describe. "
+            "Use --runtime local with a Modal volume mounted locally, "
+            "or choose --source-backend local."
+        )
+
+    source = source_backend_obj.get_source(dataset)
+    source_path = source.resolve()
+    logger.info(f"Describing dataset at {source_path} (backend={source_backend_obj.name})")
 
     lf = pl.scan_parquet(list(source_path.glob("*.par*")))
 

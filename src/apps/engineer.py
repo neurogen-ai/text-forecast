@@ -17,8 +17,16 @@ from rich.progress import (
 )
 from sklearn.cluster import DBSCAN
 
+from apps.source_args import (
+    build_source_backend_from_cli,
+    source_backend_arg,
+    source_base_dir_arg,
+    source_opt_arg,
+    source_volume_arg,
+)
 from config.env import load_env
-from runtime import LocalRuntime
+from data.sources import SourceBackend
+from runtime import build_runtime
 from utils import export_parquet, setup_logger
 
 logger = getLogger(__name__)
@@ -26,36 +34,26 @@ _ = setup_logger(logger)
 app = typer.Typer(pretty_exceptions_enable=False)
 
 
-def _make_runtime(runtime_name: str) -> LocalRuntime:
-    if runtime_name == "local":
-        return LocalRuntime()
-    raise typer.BadParameter(
-        f"Runtime {runtime_name!r} is not supported in v1.1. "
-        "Modal runtime is planned for v1.2."
-    )
-
-
 def _resolve_output_path(
     output_value: str,
     input_path: Path | None,
     input_dataset: str | None,
-    runtime: LocalRuntime,
-    staged_loc: Path,
+    source_backend: SourceBackend,
 ) -> Path:
-    """Resolve --output as explicit path or staged dataset name."""
+    """Resolve --output as explicit path or dataset name via source backend."""
     if not output_value:
         if input_path is not None:
             return input_path.parent / f"{input_path.name}-engineered"
         if input_dataset:
-            return runtime.get_source(
-                root=staged_loc, name=f"{input_dataset}-engineered"
+            return source_backend.get_source(
+                f"{input_dataset}-engineered"
             ).resolve()
         raise ValueError("Cannot derive output without input_path or input_dataset")
 
     candidate = Path(output_value)
     if candidate.is_absolute() or "/" in output_value:
         return candidate
-    return runtime.get_source(root=staged_loc, name=output_value).resolve()
+    return source_backend.get_source(output_value).resolve()
 
 
 def run_dbscan_on_chunk(df_chunk: pl.DataFrame) -> pl.DataFrame:
@@ -107,7 +105,7 @@ def main(
         "",
         "--input-path",
         "-i",
-        help="Path to input data",
+        help="Path to input data (local filesystem only)",
     ),
     input_dataset: str = typer.Option(
         "", "--input-dataset", "-d", help="Dataset name to use as input"
@@ -116,7 +114,7 @@ def main(
         "",
         "--output",
         "-o",
-        help='Explicit output path or staged dataset name; defaults to "<input>-engineered"',
+        help='Explicit output path or dataset name; defaults to "<input>-engineered"',
     ),
     len_cols: list[str] = typer.Option(
         [],
@@ -142,16 +140,14 @@ def main(
         "local",
         "--runtime",
         "-r",
-        help="Execution backend (only 'local' is supported in v1.1)",
+        help="Execution backend (local or modal)",
     ),
+    source_backend: str | None = source_backend_arg(),
+    source_opts: list[str] = source_opt_arg(),
+    source_base_dir: Path | None = source_base_dir_arg(),
+    source_volume: str | None = source_volume_arg(),
     tracking_uri: str | None = typer.Option(
         None, "--tracking-uri", help="Override MLflow tracking URI"
-    ),
-    raw_loc: Path | None = typer.Option(
-        None, "--raw-loc", help="Override raw data location"
-    ),
-    staged_loc: Path | None = typer.Option(
-        None, "--staged-loc", help="Override staged data location"
     ),
     artifact_loc: Path | None = typer.Option(
         None, "--artifact-loc", help="Override artifact storage location"
@@ -164,27 +160,49 @@ def main(
             k: v
             for k, v in {
                 "tracking_uri": tracking_uri,
-                "raw_loc": raw_loc,
-                "staged_loc": staged_loc,
                 "artifact_loc": artifact_loc,
             }.items()
             if v is not None
         }
     )
-    runtime = _make_runtime(runtime_name)
+
+    source_backend_obj = build_source_backend_from_cli(
+        env=env,
+        source_backend=source_backend,
+        source_opts=source_opts,
+        source_base_dir=source_base_dir,
+        source_volume=source_volume,
+    )
+
+    if runtime_name is None:
+        runtime_name = env.runtime.get("default", "local")
+    runtime = build_runtime(runtime_name, env)
+
+    supported = getattr(runtime, "supported_source_backends", {"local"})
+    if source_backend_obj.name not in supported:
+        raise typer.BadParameter(
+            f"Runtime {runtime_name!r} does not support source backend "
+            f"{source_backend_obj.name!r}"
+        )
+
+    if runtime_name == "modal":
+        raise typer.BadParameter(
+            "Modal runtime is not yet supported for engineer. "
+            "Use --runtime local with a Modal volume mounted locally, "
+            "or choose --source-backend local."
+        )
 
     if input_path:
         origin = input_path
     else:
-        source = runtime.get_source(root=env.staged_loc, name=input_dataset)
-        origin = runtime.maybe_download(source)
+        source = source_backend_obj.get_source(input_dataset)
+        origin = source.resolve()
 
     output = _resolve_output_path(
         output_value=output_path,
         input_path=input_path if input_path else None,
         input_dataset=input_dataset if input_dataset else None,
-        runtime=runtime,
-        staged_loc=env.staged_loc,
+        source_backend=source_backend_obj,
     )
     os.makedirs(str(output), exist_ok=False)
 

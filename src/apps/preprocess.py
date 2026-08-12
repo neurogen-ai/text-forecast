@@ -8,9 +8,16 @@ from pathlib import Path
 
 import typer
 
+from apps.source_args import (
+    build_source_backend_from_cli,
+    source_backend_arg,
+    source_base_dir_arg,
+    source_opt_arg,
+    source_volume_arg,
+)
 from config.env import Env, load_env
 from data.preprocess.pipeline import PreprocessJob
-from data.sources import LocalStagedSource
+from data.sources import SourceBackend
 from data.sources.base import DataSource
 from runtime import build_runtime
 from utils.logging import setup_logger
@@ -29,11 +36,32 @@ def _parse_embedder_config(value: str) -> dict[str, object]:
     return json.loads(value)
 
 
+def _resolve_origin(
+    origin: str, source_backend: SourceBackend
+) -> tuple[DataSource, str]:
+    """Map a CLI origin (path or dataset name) to a DataSource and base name."""
+    origin_path = Path(origin)
+    if origin_path.exists() and source_backend.name == "local":
+        base_dir = source_backend.base_dir
+        try:
+            name = str(origin_path.relative_to(base_dir))
+        except ValueError as exc:
+            raise typer.BadParameter(
+                f"Path {origin} is not under the local source base_dir {base_dir}"
+            ) from exc
+        origin_source = source_backend.get_source(name)
+        base_name = origin_path.stem
+    else:
+        origin_source = source_backend.get_source(origin)
+        base_name = origin
+    return origin_source, base_name
+
+
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
     origin: str = typer.Argument(
-        help="Path to raw data or dataset name under raw-loc",
+        help="Dataset name or local path under the source base_dir",
     ),
     name: str = typer.Option(
         "",
@@ -178,20 +206,14 @@ def main(
         "-r",
         help="Execution backend (local or modal; defaults to [runtime].default)",
     ),
+    source_backend: str | None = source_backend_arg(),
+    source_opts: list[str] = source_opt_arg(),
+    source_base_dir: Path | None = source_base_dir_arg(),
+    source_volume: str | None = source_volume_arg(),
     tracking_uri: str | None = typer.Option(
         None,
         "--tracking-uri",
         help="Override MLflow tracking URI",
-    ),
-    raw_loc: Path | None = typer.Option(
-        None,
-        "--raw-loc",
-        help="Override raw data location",
-    ),
-    staged_loc: Path | None = typer.Option(
-        None,
-        "--staged-loc",
-        help="Override staged data location",
     ),
     artifact_loc: Path | None = typer.Option(
         None,
@@ -217,12 +239,18 @@ def main(
             k: v
             for k, v in {
                 "tracking_uri": tracking_uri,
-                "raw_loc": raw_loc,
-                "staged_loc": staged_loc,
                 "artifact_loc": artifact_loc,
             }.items()
             if v is not None
         }
+    )
+
+    source_backend_obj = build_source_backend_from_cli(
+        env=env,
+        source_backend=source_backend,
+        source_opts=source_opts,
+        source_base_dir=source_base_dir,
+        source_volume=source_volume,
     )
 
     if runtime_name is None:
@@ -242,22 +270,17 @@ def main(
 
     runtime = build_runtime(runtime_name, env)
 
-    origin_path = Path(origin)
-    if origin_path.exists():
-        origin_source: DataSource = LocalStagedSource(
-            path=origin_path.parent, name=origin_path.name
+    supported = getattr(runtime, "supported_source_backends", {"local"})
+    if source_backend_obj.name not in supported:
+        raise typer.BadParameter(
+            f"Runtime {runtime_name!r} does not support source backend "
+            f"{source_backend_obj.name!r}"
         )
-        base_name = origin_path.stem
-    else:
-        origin_source = runtime.get_source(root=env.raw_loc, name=origin)
-        base_name = origin
 
-    if not name:
-        destination = runtime.get_source(
-            root=env.staged_loc, name=f"{base_name}-preprocessed"
-        )
-    else:
-        destination = runtime.get_source(root=env.staged_loc, name=name)
+    origin_source, base_name = _resolve_origin(origin, source_backend_obj)
+
+    dest_name = name if name else f"{base_name}-preprocessed"
+    destination = source_backend_obj.get_source(dest_name)
 
     embedder_kwargs = _parse_embedder_config(embedder_config)
     if embedder_device:

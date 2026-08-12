@@ -15,6 +15,13 @@ import torch._logging
 import typer
 from torch.utils.data import DataLoader
 
+from apps.source_args import (
+    build_source_backend_from_cli,
+    source_backend_arg,
+    source_base_dir_arg,
+    source_opt_arg,
+    source_volume_arg,
+)
 from builders import build_eval_example_progress
 from config.env import load_env
 from config.loader import load_experiment_from_path
@@ -62,14 +69,12 @@ def main(
     experiment: str = typer.Option(
         "", "--experiment", help="MLflow experiment name override"
     ),
+    source_backend: str | None = source_backend_arg(),
+    source_opts: list[str] = source_opt_arg(),
+    source_base_dir: Path | None = source_base_dir_arg(),
+    source_volume: str | None = source_volume_arg(),
     tracking_uri: str | None = typer.Option(
         None, "--tracking-uri", help="Override MLflow tracking URI"
-    ),
-    raw_loc: Path | None = typer.Option(
-        None, "--raw-loc", help="Override raw data location"
-    ),
-    staged_loc: Path | None = typer.Option(
-        None, "--staged-loc", help="Override staged data location"
     ),
     artifact_loc: Path | None = typer.Option(
         None, "--artifact-loc", help="Override artifact storage location"
@@ -98,13 +103,25 @@ def main(
             k: v
             for k, v in {
                 "tracking_uri": tracking_uri,
-                "raw_loc": raw_loc,
-                "staged_loc": staged_loc,
                 "artifact_loc": artifact_loc,
             }.items()
             if v is not None
         }
     )
+
+    source_backend_obj = build_source_backend_from_cli(
+        env=env,
+        source_backend=source_backend,
+        source_opts=source_opts,
+        source_base_dir=source_base_dir,
+        source_volume=source_volume,
+    )
+
+    if source_backend_obj.name != "local":
+        raise typer.BadParameter(
+            "eval currently requires --source-backend local "
+            "for local prediction output"
+        )
 
     device = torch.device(
         "cuda" if torch.cuda.is_available() and gpu else "cpu"
@@ -122,7 +139,8 @@ def main(
     root_obj = ctx.find_root().obj
     mlflow_experiment = experiment or f"{root_obj['experiment_name']}-EVAL"
 
-    PREDICTIONS_DIR = env.staged_loc / "eval" / run_id / f"run-{prefix}"
+    base_dir = source_backend_obj.base_dir
+    PREDICTIONS_DIR = base_dir / "eval" / run_id / f"run-{prefix}"
     if PREDICTIONS_DIR.exists():
         logger.warning(f"Removing data in {PREDICTIONS_DIR}")
         time.sleep(5)
@@ -153,7 +171,9 @@ def main(
     experiment_file_path = processor.download_experiment_file(
         run_id=run_id, dest=CHECKPOINT_DIR
     )
-    exp = load_experiment_from_path(experiment_file_path, runtime, env=env)
+    exp = load_experiment_from_path(
+        experiment_file_path, runtime, env=env, source_backend=source_backend_obj
+    )
 
     checkpoint = processor.load(
         ref=CheckpointRef(run_id=run_id, epoch=epoch),
