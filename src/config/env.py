@@ -7,7 +7,6 @@ CLI overrides.  No module-level singletons or PEP 562 shims remain.
 from __future__ import annotations
 
 import tomllib
-import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -23,26 +22,6 @@ class Env:
     artifact_loc: Path
     runtime: dict[str, Any] = field(default_factory=dict)
     source: dict[str, Any] = field(default_factory=dict)
-
-    # Deprecated: kept as aliases for the local source base_dir until all apps
-    # are migrated to ``source_backend.get_source()``.
-    @property
-    def staged_loc(self) -> Path:
-        warnings.warn(
-            "Env.staged_loc is deprecated; use the source backend instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return Path(self.source.get("local", {}).get("base_dir", "/tmp/data"))
-
-    @property
-    def raw_loc(self) -> Path:
-        warnings.warn(
-            "Env.raw_loc is deprecated; use the source backend instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return Path(self.source.get("local", {}).get("base_dir", "/tmp/data"))
 
 
 def _load_toml() -> dict[str, Any]:
