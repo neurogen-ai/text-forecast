@@ -7,12 +7,12 @@ from typing import Any, TYPE_CHECKING
 
 import modal
 
-from config.env import Env
 from data.preprocess.embed_modal import ModalEmbedder
 from data.preprocess.pipeline import PreprocessJob, run_preprocess_pipeline
 from data.sources.base import DataSource
 
 if TYPE_CHECKING:
+    from config.env import Env
     from runtime.base import Runtime, TextEmbedder
 
 logger = getLogger(__name__)
