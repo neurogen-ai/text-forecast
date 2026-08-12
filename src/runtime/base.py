@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from data.sources.base import DataSource
@@ -20,14 +19,11 @@ class TextEmbedder(Protocol):
 
 @runtime_checkable
 class Runtime(Protocol):
-    """Execution backend: resolves paths, volumes, embedders, and remote jobs."""
+    """Execution backend: embedders and remote job dispatch."""
 
-    def get_source(self, root: str | Path, name: str) -> DataSource: ...
+    @property
+    def supported_source_backends(self) -> set[str]: ...
 
     def get_embedder(self, key: str, **kwargs: Any) -> TextEmbedder: ...
-
-    def maybe_download(self, source: DataSource) -> Path: ...
-
-    def maybe_upload(self, source: DataSource, local_path: Path) -> None: ...
 
     def run_preprocess(self, job: "PreprocessJob") -> DataSource: ...

@@ -3,19 +3,23 @@
 from __future__ import annotations
 
 from logging import getLogger
-from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 import modal
 
+from config.env import Env
 from data.preprocess.embed_modal import ModalEmbedder
 from data.preprocess.pipeline import PreprocessJob, run_preprocess_pipeline
 from data.sources.base import DataSource
-from data.sources.modal import ModalVolumeSource
+
 if TYPE_CHECKING:
     from runtime.base import Runtime, TextEmbedder
 
 logger = getLogger(__name__)
+
+# Volume label mounted by the remote preprocess function. This is a module
+# constant because Modal function decorators are evaluated at import time.
+VOLUME_LABEL = "openalex-staged"
 
 preprocess_image = (
     modal.Image.debian_slim(python_version="3.13")
@@ -25,15 +29,7 @@ preprocess_image = (
 )
 
 app = modal.App("citef-preprocess")
-
-# Volume labels mounted by the remote preprocess function.  These are module
-# constants because Modal function decorators are evaluated at import time; in
-# v1.2 the config values under [runtime.modal] must match them.
-RAW_VOLUME_LABEL = "openalex-raw"
-STAGED_VOLUME_LABEL = "openalex-staged"
-
-raw_volume = modal.Volume.from_name(RAW_VOLUME_LABEL, create_if_missing=True)
-staged_volume = modal.Volume.from_name(STAGED_VOLUME_LABEL, create_if_missing=True)
+volume = modal.Volume.from_name(VOLUME_LABEL, create_if_missing=True)
 
 
 @app.cls(
@@ -70,16 +66,13 @@ class ModalEmbeddingGPU:
 
 
 @app.function(
-    volumes={
-        f"/modal/{RAW_VOLUME_LABEL}": raw_volume,
-        f"/modal/{STAGED_VOLUME_LABEL}": staged_volume,
-    },
+    volumes={f"/modal/{VOLUME_LABEL}": volume},
     image=preprocess_image,
 )
 def run_preprocess_remote(job: PreprocessJob) -> DataSource:
     """Container entry point for the full preprocessing pipeline.
 
-    Volumes are mounted at the same paths ``ModalVolumeSource.resolve()``
+    Volumes are mounted at the same paths ``ModalDataSource.resolve()``
     returns, so a lightweight ``LocalRuntime`` can run the pipeline unchanged.
     """
     from runtime.local import LocalRuntime
@@ -91,12 +84,12 @@ def run_preprocess_remote(job: PreprocessJob) -> DataSource:
 class ModalRuntime:
     """Modal backend: volume sources, GPU embedder, and remote job dispatch."""
 
+    supported_source_backends = {"modal"}
+
     def __init__(
         self,
-        env: "Env",
+        env: Env,
         project: str,
-        raw_volume: str,
-        staged_volume: str,
         gpu: str,
         embedder_batch_size: int,
     ) -> None:
@@ -105,21 +98,12 @@ class ModalRuntime:
         self._gpu_type = gpu
         self._embedder_batch_size = embedder_batch_size
 
-        if raw_volume != RAW_VOLUME_LABEL or staged_volume != STAGED_VOLUME_LABEL:
+        configured_volume = env.source.get("modal", {}).get("volume")
+        if configured_volume != VOLUME_LABEL:
             raise ValueError(
-                "Modal volume labels in config/config.toml must match the "
-                f"module defaults in v1.2: raw_volume={RAW_VOLUME_LABEL!r}, "
-                f"staged_volume={STAGED_VOLUME_LABEL!r}."
+                "Modal volume label in config/config.toml must match the "
+                f"module constant: {VOLUME_LABEL!r}. Got: {configured_volume!r}."
             )
-
-    def _is_raw_root(self, root: str | Path) -> bool:
-        return Path(root) == Path(self._env.raw_loc)
-
-    def get_source(self, root: str | Path, name: str) -> DataSource:
-        volume_label = (
-            RAW_VOLUME_LABEL if self._is_raw_root(root) else STAGED_VOLUME_LABEL
-        )
-        return ModalVolumeSource(volume_label=volume_label, path="", name=name)
 
     def get_embedder(self, key: str, **kwargs: Any) -> TextEmbedder:
         model_name = kwargs.get("model_name", _key_to_model_name(key))
@@ -130,16 +114,10 @@ class ModalRuntime:
             gpu_cls=ModalEmbeddingGPU,
         )
 
-    def maybe_download(self, source: DataSource) -> Path:
-        return source.resolve()
-
-    def maybe_upload(self, source: DataSource, local_path: Path) -> None:
-        return None
-
     def run_preprocess(self, job: PreprocessJob) -> DataSource:
         logger.info(f"Dispatching preprocess job to Modal project {self._project!r}")
-        with modal.enable_output(), app.run():
-            return run_preprocess_remote.remote(job)
+        return run_preprocess_remote.remote(job)
+
 
 def _key_to_model_name(key: str) -> str:
     """Map a local embedder registry key to its HuggingFace model name."""
@@ -160,5 +138,8 @@ def _resolve_output_dim(model_name: str) -> int:
         return 768
     raise ValueError(
         f"Unknown output dimension for {model_name!r}. "
-        "Add it to _resolve_output_dim in src/runtime/modal.py."
+        "Add it to _resolve_output_dim in src/runtime/modal_runtime.py."
     )
+
+
+Runtime.register(ModalRuntime)

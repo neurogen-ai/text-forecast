@@ -75,7 +75,7 @@ def run_preprocess_pipeline(job: PreprocessJob, runtime: Runtime) -> DataSource:
     """Execute the full preprocessing job using the supplied runtime."""
     os.environ["POLARS_MAX_THREADS"] = f"{job.max_threads}"
 
-    source_path = runtime.maybe_download(job.origin)
+    source_path = job.origin.resolve()
     destination_path = job.destination.resolve()
     os.makedirs(destination_path, exist_ok=True)
     logger.info(f"Preprocessing {source_path} -> {destination_path}")
@@ -252,5 +252,4 @@ def run_preprocess_pipeline(job: PreprocessJob, runtime: Runtime) -> DataSource:
     with open(destination_path / "metadata.json", "w") as f:
         json.dump(metadata, f)
 
-    runtime.maybe_upload(job.destination, destination_path)
     return job.destination
