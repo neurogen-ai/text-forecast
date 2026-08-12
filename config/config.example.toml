@@ -2,16 +2,21 @@ experiment = "transformer_class"
 
 [env]
 tracking_uri = "http://127.0.0.1:5000"
-raw_loc      = "/home/fnoble/Data/OpenAlex-parquet/"
-staged_loc   = "/home/fnoble/Data/"
 artifact_loc = "/home/fnoble/experiment-tracking/artifacts"
+
+[source]
+default = "local"
+
+[source.local]
+base_dir = "/home/fnoble/Data"
+
+[source.modal]
+volume = "openalex-staged"
 
 [runtime]
 default = "local"
 
 [runtime.modal]
 project = "citef"
-raw_volume = "openalex-raw"
-staged_volume = "openalex-staged"
 gpu = "T4"
 embedder_batch_size = 64

@@ -7,6 +7,7 @@ CLI overrides.  No module-level singletons or PEP 562 shims remain.
 from __future__ import annotations
 
 import tomllib
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,10 +20,29 @@ class Env:
     """Machine-specific settings that are not experiment-relevant."""
 
     tracking_uri: str
-    raw_loc: Path
-    staged_loc: Path
     artifact_loc: Path
     runtime: dict[str, Any] = field(default_factory=dict)
+    source: dict[str, Any] = field(default_factory=dict)
+
+    # Deprecated: kept as aliases for the local source base_dir until all apps
+    # are migrated to ``source_backend.get_source()``.
+    @property
+    def staged_loc(self) -> Path:
+        warnings.warn(
+            "Env.staged_loc is deprecated; use the source backend instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return Path(self.source.get("local", {}).get("base_dir", "/tmp/data"))
+
+    @property
+    def raw_loc(self) -> Path:
+        warnings.warn(
+            "Env.raw_loc is deprecated; use the source backend instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return Path(self.source.get("local", {}).get("base_dir", "/tmp/data"))
 
 
 def _load_toml() -> dict[str, Any]:
@@ -31,35 +51,45 @@ def _load_toml() -> dict[str, Any]:
         return tomllib.load(f)
 
 
-def load_env(overrides: dict[str, Any] | None = None) -> Env:
-    """Load ``[env]`` and ``[runtime]`` from ``config/config.toml`` and apply CLI overrides.
+def _deep_update(base: dict[str, Any], updates: dict[str, Any]) -> None:
+    """Merge ``updates`` into ``base`` recursively."""
+    for key, value in updates.items():
+        if isinstance(value, dict) and key in base and isinstance(base[key], dict):
+            _deep_update(base[key], value)
+        else:
+            base[key] = value
 
-    All four ``[env]`` keys get CLI override flags.  ``staged_loc`` is validated to
-    exist at load time.  The ``[runtime]`` section is returned verbatim for the
-    runtime factory to consume.
+
+def load_env(
+    overrides: dict[str, Any] | None = None,
+    source_overrides: dict[str, Any] | None = None,
+) -> Env:
+    """Load ``[env]``, ``[source]`` and ``[runtime]`` from ``config/config.toml``.
+
+    ``[source]`` defines the default data-source backend and its config. CLI
+    flags can override ``tracking_uri``/``artifact_loc`` via ``overrides`` and
+    source-backend options via ``source_overrides``.
     """
     overrides = overrides or {}
     data = _load_toml()
     env_data = data.get("env", {})
 
-    staged_loc = Path(
-        overrides.get("staged_loc", env_data.get("staged_loc", "/tmp/staged"))
-    )
-    if not staged_loc.exists():
-        raise FileNotFoundError(f"staged_loc does not exist: {staged_loc}")
+    source = data.get("source", {})
+    source.setdefault("default", "local")
+    source.setdefault("local", {})
+    source["local"].setdefault("base_dir", "/tmp/data")
+    if source_overrides:
+        _deep_update(source, source_overrides)
 
     return Env(
         tracking_uri=overrides.get(
             "tracking_uri", env_data.get("tracking_uri", "http://127.0.0.1:5000")
         ),
-        raw_loc=Path(
-            overrides.get("raw_loc", env_data.get("raw_loc", "/tmp/raw"))
-        ),
-        staged_loc=staged_loc,
         artifact_loc=Path(
             overrides.get(
                 "artifact_loc", env_data.get("artifact_loc", "/tmp/artifacts")
             )
         ),
         runtime=data.get("runtime", {}),
+        source=source,
     )
