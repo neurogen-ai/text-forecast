@@ -20,7 +20,7 @@ logger = getLogger(__name__)
 preprocess_image = (
     modal.Image.debian_slim(python_version="3.13")
     .pip_install_from_pyproject("pyproject.toml")
-    .add_local_dir("src", remote_path="/root/src")
+    .add_local_dir("src", remote_path="/root/src", copy=True)
     .env({"PYTHONPATH": "/root/src"})
 )
 
@@ -138,8 +138,8 @@ class ModalRuntime:
 
     def run_preprocess(self, job: PreprocessJob) -> DataSource:
         logger.info(f"Dispatching preprocess job to Modal project {self._project!r}")
-        return run_preprocess_remote.remote(job)
-
+        with modal.enable_output(), app.run():
+            return run_preprocess_remote.remote(job)
 
 def _key_to_model_name(key: str) -> str:
     """Map a local embedder registry key to its HuggingFace model name."""
@@ -162,6 +162,3 @@ def _resolve_output_dim(model_name: str) -> int:
         f"Unknown output dimension for {model_name!r}. "
         "Add it to _resolve_output_dim in src/runtime/modal.py."
     )
-
-
-Runtime.register(ModalRuntime)

@@ -20,7 +20,7 @@ def build_runtime(runtime_name: str, env: Env) -> Runtime:
 
     if runtime_name == "modal":
         try:
-            from .modal import ModalRuntime
+            from .modal_runtime import ModalRuntime
         except ImportError as exc:
             raise RuntimeError(
                 "The modal runtime requires the 'modal' extra: "
