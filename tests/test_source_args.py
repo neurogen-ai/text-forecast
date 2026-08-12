@@ -62,11 +62,13 @@ def test_source_volume_shortcut(env: Env) -> None:
 
 def test_source_opt_override(env: Env, tmp_path: Path) -> None:
     env.source["local"]["base_dir"] = str(tmp_path)
+    other = tmp_path / "override"
+    other.mkdir()
     backend = build_source_backend_from_cli(
         env=env,
         source_backend=None,
-        source_opts=["base_dir=/tmp/other"],
+        source_opts=[f"base_dir={other}"],
         source_base_dir=None,
         source_volume=None,
     )
-    assert backend.get_source("foo").resolve() == Path("/tmp/other/foo")
+    assert backend.get_source("foo").resolve() == other / "foo"
