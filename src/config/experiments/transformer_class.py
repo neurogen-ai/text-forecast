@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from datetime import date
-from pathlib import Path
 
 import polars as pl
 import torch
@@ -24,7 +23,7 @@ from config.experiment import Experiment
 from config.runtime import RunContext
 from data.datasets.text_token_dataset import TextTokenDataset, TextTokenDatasetConfig
 from data.datasets.text_token_dataset import TextTokenDatasetOutput
-from data.sources import LocalStagedSource
+from data.sources import SourceBackend
 from models import TransformerClass
 from training.checkpointing import MlflowCheckpointProcessor
 from training.losses import BinaryCrossEntropyLoss
@@ -47,16 +46,17 @@ _NUM_WORKERS = 2
 _EPOCHS = 8
 
 
-def build(runtime: RunContext, env: Env) -> Experiment[TextTokenDatasetOutput]:
+def build(
+    runtime: RunContext,
+    env: Env,
+    source_backend: SourceBackend,
+) -> Experiment[TextTokenDatasetOutput]:
     """Build the basic Transformer classifier experiment."""
     device = runtime.device
     dtype = runtime.dtype
     subsample = runtime.subsample
 
-    source = LocalStagedSource(
-        path=env.staged_loc,
-        name=_SOURCE_NAME,
-    )
+    source = source_backend.get_source(_SOURCE_NAME)
 
     # Keep only rows with a non-null citation count.
     filter_expr = pl.col(_Y_COL) >= 0

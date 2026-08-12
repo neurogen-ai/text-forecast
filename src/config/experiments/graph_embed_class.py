@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from datetime import date
-from pathlib import Path
 
 import polars as pl
 import torch
@@ -21,7 +20,7 @@ from config.runtime import RunContext
 from data.datasets.graph_dataset import GraphDataset, GraphDatasetConfig
 from data.datasets.types import CitationGraphDatasetOutput
 from data.formaters import GraphFormater
-from data.sources import LocalStagedSource
+from data.sources import SourceBackend
 from models import EmbedGraphClass
 from training.checkpointing import MlflowCheckpointProcessor
 from training.losses import BinaryCrossEntropyLoss
@@ -33,16 +32,17 @@ from training.tracking import BinaryClassificationTracker
 experiment_name: str = "General-2-graph-embed"
 
 
-def build(runtime: RunContext, env: Env) -> Experiment[CitationGraphDatasetOutput]:
+def build(
+    runtime: RunContext,
+    env: Env,
+    source_backend: SourceBackend,
+) -> Experiment[CitationGraphDatasetOutput]:
     """Build the full experiment object graph from the injected runtime and env."""
     device = runtime.device
     dtype = runtime.dtype
     subsample = runtime.subsample
 
-    source = LocalStagedSource(
-        path=env.staged_loc,
-        name="1920-2000-lowercase-2-embedded",
-    )
+    source = source_backend.get_source("1920-2000-lowercase-2-embedded")
 
     filter_expr = (pl.col("cited_by_count") >= 1) & (
         pl.col("referenced_works").list.len() >= 5
