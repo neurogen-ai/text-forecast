@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from logging import getLogger
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import modal
 
@@ -12,7 +12,8 @@ from data.preprocess.embed_modal import ModalEmbedder
 from data.preprocess.pipeline import PreprocessJob, run_preprocess_pipeline
 from data.sources.base import DataSource
 from data.sources.modal import ModalVolumeSource
-from runtime.base import Runtime, TextEmbedder
+if TYPE_CHECKING:
+    from runtime.base import Runtime, TextEmbedder
 
 logger = getLogger(__name__)
 
@@ -36,7 +37,7 @@ staged_volume = modal.Volume.from_name(STAGED_VOLUME_LABEL, create_if_missing=Tr
 
 
 @app.cls(
-    gpu="T4",
+    gpu="L4",
     image=preprocess_image,
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},

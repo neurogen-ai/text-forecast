@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from logging import getLogger
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import polars as pl
 from rich.progress import (
@@ -23,7 +23,8 @@ from rich.progress import (
 from data.preprocess.clean import main as clean_step
 from data.preprocess.tokenise import main as tokenise_step
 from data.sources.base import DataSource
-from runtime.base import Runtime, TextEmbedder
+if TYPE_CHECKING:
+    from runtime.base import Runtime, TextEmbedder
 
 logger = getLogger(__name__)
 
