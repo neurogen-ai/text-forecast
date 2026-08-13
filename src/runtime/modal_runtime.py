@@ -1,6 +1,5 @@
 """Modal runtime: volumes, image, GPU embedder, and remote preprocess dispatch."""
 
-
 from logging import getLogger
 from typing import Any
 
@@ -8,6 +7,7 @@ import modal
 
 from config.env import load_env
 from data.preprocess.embed_modal import ModalEmbedder
+from data.preprocess.embed_huggingface import EMBEDDERS
 from data.preprocess.pipeline import PreprocessJob, run_preprocess_pipeline
 from data.sources.base import DataSource
 from utils.logging import setup_logger
@@ -192,37 +192,31 @@ class ModalRuntime:
         logger.info("ModalRuntime.run_preprocess: received result from Modal")
         return result
 
-
-def _key_to_model_name(key: str) -> str:
-    """Map a local embedder registry key to its HuggingFace model name."""
-    mapping = {
-        "modernbert-base": "answerdotai/ModernBERT-base",
-        "modernbert-embed-base": "nomic-ai/modernbert-embed-base",
-    }
-
-    if key not in mapping:
+def _embedder_config(key: str) -> EmbedderConfig:
+    """Return the configuration for a local embedder registry key."""
+    try:
+        return EMBEDDERS[key]
+    except KeyError:
         raise ValueError(
             f"Modal runtime does not support embedder {key!r}. "
-            f"Supported keys: {list(mapping)}"
-        )
-    return mapping[key]
+            f"Supported keys: {list(EMBEDDERS)}"
+        ) from None
+
+
+def _key_to_model_name(key: str) -> str:
+    return _embedder_config(key).model_name
 
 
 def _resolve_output_dim(model_name: str) -> int:
-    """Return the embedding dimension for known models without loading them."""
-    dim_map = {
-        "answerdotai/ModernBERT-base": 768,
-        "modernbert-base": 768,
-        "nomic-ai/modernbert-embed-base": 768,
-    }
-    dim = dim_map.get(model_name, None)
-    if dim is not None:
-        return dim
+    """Return the embedding dimension for a known HuggingFace model name."""
+    for config in EMBEDDERS.values():
+        if config.model_name == model_name:
+            return config.output_dim
+
     raise ValueError(
         f"Unknown output dimension for {model_name!r}. "
-        "Add it to _resolve_output_dim in src/runtime/modal_runtime.py."
+        "Add it to EMBEDDERS in src/runtime/modal_runtime.py."
     )
-
 
 def _build_modal_embedder(key: str, **kwargs: Any) -> TextEmbedder:
     logger.debug("_build_modal_embedder: key=%r kwargs=%r", key, kwargs)

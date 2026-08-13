@@ -22,6 +22,7 @@ from rich.progress import (
 
 from data.preprocess.clean import main as clean_step
 from data.preprocess.tokenise import main as tokenise_step
+from data.preprocess.embed_huggingface import EMBEDDERS
 from data.sources.base import DataSource
 from utils.logging import setup_logger
 if TYPE_CHECKING:
@@ -147,10 +148,14 @@ def run_preprocess_pipeline(job: PreprocessJob, runtime: Runtime) -> DataSource:
         lf_whole = lf_whole.slice(0, 500)
 
     embedder_instance: TextEmbedder | None = None
+    embedder_bos_token: str | None = None
+    embedder_eos_token: str | None = None
     if job.embedder_key:
         embedder_instance = runtime.get_embedder(
             key=job.embedder_key, **job.embedder_kwargs
         )
+        embedder_bos_token = EMBEDDERS[job.embedder_key].bos_token
+        embedder_eos_token = EMBEDDERS[job.embedder_key].eos_token
 
     def embed_batch(series: pl.Series, **kwargs: Any) -> pl.Series:
         assert embedder_instance is not None
@@ -199,9 +204,12 @@ def run_preprocess_pipeline(job: PreprocessJob, runtime: Runtime) -> DataSource:
             lf = (
                 lf.drop_nulls(job.embed_cols)
                 .with_columns(
+                    [embedder_bos_token + pl.col(col) + embedder_eos_token for col in job.embed_cols]
+                    )
+                .with_columns(
                     to_embed=pl.concat_str(
                         [pl.col(col) for col in job.embed_cols],
-                        separator="-",
+                        separator="",
                     )
                 )
                 .with_columns(
@@ -212,7 +220,7 @@ def run_preprocess_pipeline(job: PreprocessJob, runtime: Runtime) -> DataSource:
                             pl.Float32, width=embedder_instance.output_dim
                         ),
                     )
-                    .alias(f"{' '.join(job.embed_cols)}_embedding")
+                    .alias(f"{'_'.join(job.embed_cols)}_embedding")
                 )
                 .drop("to_embed")
             )

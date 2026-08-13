@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from logging import getLogger
-from typing import Any
+from typing import Any, NamedTuple
 
 import torch
 from transformers import AutoModel, AutoTokenizer
@@ -21,6 +21,26 @@ _DTYPE_MAP: dict[str, torch.dtype] = {
     "float32": torch.float32,
 }
 
+class EmbedderConfig(NamedTuple):
+    model_name: str
+    output_dim: int
+    bos_token: str
+    eos_token: str
+
+EMBEDDERS: dict[str, EmbedderConfig] = {
+    "modernbert-base": EmbedderConfig(
+        model_name="answerdotai/ModernBERT-base",
+        output_dim=768,
+        bos_token='[CLS]',
+        eos_token='[SEP]',
+    ),
+    "modernbert-embed-base": EmbedderConfig(
+        model_name="nomic-ai/modernbert-embed-base",
+        output_dim=768,
+        bos_token='[CLS]',
+        eos_token='[SEP]',
+    ),
+}
 
 @register_embedder("modernbert-base")
 @component
