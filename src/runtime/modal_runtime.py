@@ -141,6 +141,3 @@ def _resolve_output_dim(model_name: str) -> int:
         f"Unknown output dimension for {model_name!r}. "
         "Add it to _resolve_output_dim in src/runtime/modal_runtime.py."
     )
-
-
-Runtime.register(ModalRuntime)
