@@ -19,4 +19,5 @@ default = "local"
 [runtime.modal]
 project = "citef"
 gpu = "T4"
+python_version = "3.12"
 embedder_batch_size = 64
