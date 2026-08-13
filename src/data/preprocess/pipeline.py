@@ -23,11 +23,12 @@ from rich.progress import (
 from data.preprocess.clean import main as clean_step
 from data.preprocess.tokenise import main as tokenise_step
 from data.sources.base import DataSource
+from utils.logging import setup_logger
 if TYPE_CHECKING:
     from runtime.base import Runtime, TextEmbedder
 
 logger = getLogger(__name__)
-
+_ = setup_logger(logger)
 
 @dataclass(frozen=True, kw_only=True)
 class PreprocessJob:
@@ -79,9 +80,9 @@ def run_preprocess_pipeline(job: PreprocessJob, runtime: Runtime) -> DataSource:
     destination_path = job.destination.resolve()
     os.makedirs(destination_path, exist_ok=True)
     logger.info(f"Preprocessing {source_path} -> {destination_path}")
-
+    files = list(source_path.glob("*.par*"))
     lf_whole: pl.LazyFrame = pl.scan_parquet(
-        list(source_path.glob("*.par*")), extra_columns="ignore"
+        files, extra_columns="ignore"
     )
 
     if job.filt_license:
@@ -122,8 +123,8 @@ def run_preprocess_pipeline(job: PreprocessJob, runtime: Runtime) -> DataSource:
     elif rows_per_part:
         n_partitions = math.ceil(n_rows / rows_per_part)
     else:
-        n_partitions = 1
-        rows_per_part = max(1, math.ceil(n_rows))
+        n_partitions = len(files)
+        rows_per_part = max(1, math.ceil(n_rows / n_partitions))
 
     lf_whole = lf_whole.with_row_index("idx").with_columns(
         (pl.col("idx") // rows_per_part).clip(0, n_partitions - 1).alias("part")
@@ -151,7 +152,7 @@ def run_preprocess_pipeline(job: PreprocessJob, runtime: Runtime) -> DataSource:
             key=job.embedder_key, **job.embedder_kwargs
         )
 
-    def embed_batch(series: pl.Series) -> pl.Series:
+    def embed_batch(series: pl.Series, **kwargs: Any) -> pl.Series:
         assert embedder_instance is not None
         texts = [t if isinstance(t, str) else "" for t in series.to_list()]
         vectors = embedder_instance.encode(texts)
@@ -161,6 +162,7 @@ def run_preprocess_pipeline(job: PreprocessJob, runtime: Runtime) -> DataSource:
         )
 
     for i in range(n_partitions):
+        logger.debug(f'Beggining part {i}')
         lf = lf_whole.filter(pl.col("part") == i).drop(["idx", "part"])
 
         for col in job.replace_non_permissive_cols:
@@ -199,7 +201,7 @@ def run_preprocess_pipeline(job: PreprocessJob, runtime: Runtime) -> DataSource:
                 .with_columns(
                     to_embed=pl.concat_str(
                         [pl.col(col) for col in job.embed_cols],
-                        separator=" ",
+                        separator="-",
                     )
                 )
                 .with_columns(
@@ -231,6 +233,7 @@ def run_preprocess_pipeline(job: PreprocessJob, runtime: Runtime) -> DataSource:
             break
 
         output_fname = destination_path / f"part_{i}.parquet"
+        logger.info(f'Writing {output_fname}')
         lf.sink_parquet(
             output_fname,
             statistics=True,
