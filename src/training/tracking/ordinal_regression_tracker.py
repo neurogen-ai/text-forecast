@@ -66,7 +66,7 @@ def ordinal_preds_plot(
         expected_value + weighted_std,
         color="purple",
         alpha=0.2,
-        label="Prediction Spread ($\sigma$)",
+        label=r"Prediction Spread ($\sigma$)",
     )
 
     # Plot the Argmax line (as requested)

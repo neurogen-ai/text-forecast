@@ -72,7 +72,7 @@ def residuals_preds_plot(
             preds_sorted + (3 * sigmas_sorted),
             color="blue",
             alpha=0.15,
-            label="$\pm3\sigma$ Uncertainty Band",
+            label=r"$\pm3\sigma$ Uncertainty Band",
         )
         # Overlay actual data points
         sns.scatterplot(
@@ -96,7 +96,7 @@ def residuals_preds_plot(
             elinewidth=2,
             capsize=3,
             alpha=0.7,
-            label="Pred $\pm3\sigma$",
+            label=r"Pred $\pm3\sigma$",
         )
         # Reference identity line
         sns.lineplot(
@@ -110,7 +110,7 @@ def residuals_preds_plot(
 
     axes[1].set_xlabel("True Target Values")
     axes[1].set_ylabel("Predicted Values")
-    axes[1].set_title("Model Predictions with $3\sigma$ Uncertainty")
+    axes[1].set_title(r"Model Predictions with $3\sigma$ Uncertainty")
     axes[1].legend()
 
     plt.tight_layout()
