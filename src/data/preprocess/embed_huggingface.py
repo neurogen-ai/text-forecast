@@ -34,6 +34,7 @@ class HuggingFaceEmbedder:
     dtype: str = "bfloat16"
     pooling: str = "mean"
     compile: bool = False
+    cache_dir: str | None = None
 
     _tokenizer: Any = field(init=False, repr=False, default=None)
     _model: Any = field(init=False, repr=False, default=None)
@@ -46,6 +47,12 @@ class HuggingFaceEmbedder:
                 f"Unsupported dtype {self.dtype!r}; choose from {list(_DTYPE_MAP)}"
             )
 
+    def load(self) -> None:
+        """Eagerly load the tokenizer and model into memory."""
+        logger.info("HuggingFaceEmbedder.load: loading model %r", self.model_name)
+        self._ensure_loaded()
+        logger.info("HuggingFaceEmbedder.load: model %r loaded", self.model_name)
+
     def _resolve_device(self) -> torch.device:
         if self.device:
             return torch.device(self.device)
@@ -55,21 +62,45 @@ class HuggingFaceEmbedder:
 
     def _ensure_loaded(self) -> None:
         if self._tokenizer is not None:
+            logger.debug(
+                "HuggingFaceEmbedder._ensure_loaded: model %r already loaded",
+                self.model_name,
+            )
             return
 
-        logger.info(f"Loading embedder {self.model_name} ...")
-        self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        logger.info(
+            "HuggingFaceEmbedder._ensure_loaded: loading tokenizer for %r",
+            self.model_name,
+        )
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            self.model_name,
+            cache_dir=self.cache_dir,
+        )
+        logger.info(
+            "HuggingFaceEmbedder._ensure_loaded: loading model %r (dtype=%s)",
+            self.model_name,
+            self.dtype,
+        )
         torch_dtype = _DTYPE_MAP[self.dtype]
         self._model = AutoModel.from_pretrained(
             self.model_name,
-            dtype=torch_dtype,
-            attn_implementation="sdpa",
+            torch_dtype=torch_dtype,
+            attn_implementation="eager",
+            reference_compile=False,
+            cache_dir=self.cache_dir,
         )
+        logger.debug("HuggingFaceEmbedder._ensure_loaded: moving model to device")
         self._model.eval()
         target_device = self._resolve_device()
         self._model = self._model.to(target_device)
         if self.compile:
+            logger.debug("HuggingFaceEmbedder._ensure_loaded: compiling model")
             self._model.compile(mode="default")
+        logger.info(
+            "HuggingFaceEmbedder._ensure_loaded: model %r ready on %s",
+            self.model_name,
+            target_device,
+        )
 
     @property
     def output_dim(self) -> int:
@@ -77,6 +108,10 @@ class HuggingFaceEmbedder:
         return int(self._model.config.hidden_size)
 
     def encode(self, texts: list[str]) -> list[list[float]]:
+        logger.debug(
+            "HuggingFaceEmbedder.encode: starting batch of %d texts",
+            len(texts),
+        )
         self._ensure_loaded()
         device = self._resolve_device()
         torch_dtype = _DTYPE_MAP[self.dtype]
@@ -113,4 +148,10 @@ class HuggingFaceEmbedder:
         sum_mask = torch.clamp(sum_mask, min=1e-9)
 
         embeddings = sum_embeddings / sum_mask
-        return embeddings.float().cpu().tolist()
+        result = embeddings.float().cpu().tolist()
+        logger.debug(
+            "HuggingFaceEmbedder.encode: finished batch of %d texts -> %d embeddings",
+            len(texts),
+            len(result),
+        )
+        return result
