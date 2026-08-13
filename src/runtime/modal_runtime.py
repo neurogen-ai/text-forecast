@@ -116,7 +116,8 @@ class ModalRuntime:
 
     def run_preprocess(self, job: PreprocessJob) -> DataSource:
         logger.info(f"Dispatching preprocess job to Modal project {self._project!r}")
-        return run_preprocess_remote.remote(job)
+        with modal.enable_output(), app.run():
+            return run_preprocess_remote.remote(job)
 
 
 def _key_to_model_name(key: str) -> str:
