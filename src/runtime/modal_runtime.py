@@ -7,7 +7,7 @@ import modal
 
 from config.env import load_env
 from data.preprocess.embed_modal import ModalEmbedder
-from data.preprocess.embed_huggingface import EMBEDDERS
+from data.preprocess.embed_huggingface import EMBEDDERS, EmbedderConfig
 from data.preprocess.pipeline import PreprocessJob, run_preprocess_pipeline
 from data.sources.base import DataSource
 from utils.logging import setup_logger

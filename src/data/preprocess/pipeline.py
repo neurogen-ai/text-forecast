@@ -204,7 +204,7 @@ def run_preprocess_pipeline(job: PreprocessJob, runtime: Runtime) -> DataSource:
             lf = (
                 lf.drop_nulls(job.embed_cols)
                 .with_columns(
-                    [embedder_bos_token + pl.col(col) + embedder_eos_token for col in job.embed_cols]
+                    [pl.lit(embedder_bos_token) + pl.col(col) + pl.lit(embedder_eos_token) for col in job.embed_cols]
                     )
                 .with_columns(
                     to_embed=pl.concat_str(
