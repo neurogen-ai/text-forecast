@@ -1,12 +1,14 @@
-"""Modal runtime: volumes, image, GPU embedder, and remote preprocess dispatch."""
+"""Modal runtime: volumes, image, GPU embedder, and remote job dispatch."""
 
 from logging import getLogger
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 import modal
 
 from config.env import load_env
+from data.pipeline.describe import DescribeJob
+from data.pipeline.engineer import EngineerJob
 from data.preprocess.embed_modal import ModalEmbedder
 from data.preprocess.embed_huggingface import EMBEDDERS, EmbedderConfig
 from data.preprocess.pipeline import PreprocessJob, run_preprocess_pipeline
@@ -15,10 +17,6 @@ from utils.logging import setup_logger
 
 from config.env import Env
 from runtime.base import Runtime, TextEmbedder
-
-if TYPE_CHECKING:
-    from data.pipeline.describe import DescribeJob
-    from data.pipeline.engineer import EngineerJob
 
 logger = getLogger(__name__)
 _ = setup_logger(logger)
@@ -53,7 +51,8 @@ preprocess_image = (
     .env({"PYTHONPATH": "/root/src"})
 )
 
-MODAL_APP_NAME = "citef-preprocess"
+# Shared by the preprocess, describe, and engineer remote functions.
+MODAL_APP_NAME = "citef-data"
 
 app = modal.App(MODAL_APP_NAME)
 volume = modal.Volume.from_name(VOLUME_LABEL, create_if_missing=True)
@@ -120,22 +119,32 @@ class ModalEmbeddingGPU:
         return result
 
 
-class _ModalRemoteRuntime:
-    """Runtime used inside the Modal preprocess container.
+class _InContainerRuntime:
+    """Runtime used inside Modal containers.
 
-    Dataframe work stays in the CPU preprocess container while embedding calls
-    are delegated to the ``ModalEmbeddingGPU`` class.
+    Dataframe work stays in the CPU container while embedding calls are
+    delegated to the ``ModalEmbeddingGPU`` class defined in this module.
     """
 
     supported_source_backends = {"modal"}
 
     def get_embedder(self, key: str, **kwargs: Any) -> TextEmbedder:
-        logger.debug("_ModalRemoteRuntime.get_embedder: key=%r kwargs=%r", key, kwargs)
+        logger.debug("_InContainerRuntime.get_embedder: key=%r kwargs=%r", key, kwargs)
         return _build_modal_embedder(key, **kwargs)
 
     def run_preprocess(self, job: PreprocessJob) -> DataSource:
-        logger.info("_ModalRemoteRuntime.run_preprocess: starting job")
+        logger.info("_InContainerRuntime.run_preprocess: starting job")
         return run_preprocess_pipeline(job, self)
+
+
+def _in_container_runtime() -> _InContainerRuntime:
+    """Return the runtime used inside Modal containers.
+
+    Volume-backed sources resolve against the in-container mount roots and
+    embedders route to the GPU class in this module. Shared by every remote
+    entry point so container-side behaviour stays identical across jobs.
+    """
+    return _InContainerRuntime()
 
 
 @app.function(
@@ -161,7 +170,7 @@ def run_preprocess_remote(job: PreprocessJob) -> DataSource:
         job.embedder_key,
         job.embed_cols,
     )
-    result = run_preprocess_pipeline(job, _ModalRemoteRuntime())
+    result = run_preprocess_pipeline(job, _in_container_runtime())
     logger.info("run_preprocess_remote: preprocess job completed")
     return result
 
