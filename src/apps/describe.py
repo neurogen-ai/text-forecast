@@ -14,7 +14,7 @@ from apps.source_args import (
     source_volume_arg,
 )
 from config.env import load_env
-from data.pipeline.describe import DescribeJob, run_describe_pipeline
+from data.pipeline.describe import DescribeJob
 from runtime import build_runtime
 from utils.logging import setup_logger
 
@@ -52,8 +52,8 @@ def main(
         "--filter-expr",
         help="Raw Polars expression string applied to the dataset",
     ),
-    runtime_name: str = typer.Option(
-        "local",
+    runtime_name: str | None = typer.Option(
+        None,
         "--runtime",
         "-r",
         help="Execution backend (local or modal)",
@@ -99,13 +99,6 @@ def main(
             f"{source_backend_obj.name!r}"
         )
 
-    if runtime_name == "modal":
-        raise typer.BadParameter(
-            "Modal runtime is not yet supported for describe. "
-            "Use --runtime local with a Modal volume mounted locally, "
-            "or choose --source-backend local."
-        )
-
     source = source_backend_obj.get_source(dataset)
 
     job = DescribeJob(
@@ -117,4 +110,4 @@ def main(
         buckets=list(buckets),
         filter_expr=filter_expr if filter_expr else None,
     )
-    run_describe_pipeline(job)
+    runtime.run_describe(job)
