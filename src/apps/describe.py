@@ -4,7 +4,6 @@ from datetime import datetime
 from logging import getLogger
 from pathlib import Path
 
-import polars as pl
 import typer
 
 from apps.source_args import (
@@ -15,6 +14,7 @@ from apps.source_args import (
     source_volume_arg,
 )
 from config.env import load_env
+from data.pipeline.describe import DescribeJob, run_describe_pipeline
 from runtime import build_runtime
 from utils.logging import setup_logger
 
@@ -51,16 +51,6 @@ def main(
         "",
         "--filter-expr",
         help="Raw Polars expression string applied to the dataset",
-    ),
-    min_cited_by_count: int | None = typer.Option(
-        None,
-        "--min-cited-by-count",
-        help="Minimum cited_by_count filter",
-    ),
-    min_referenced_works: int | None = typer.Option(
-        None,
-        "--min-referenced-works",
-        help="Minimum referenced_works list length filter",
     ),
     runtime_name: str = typer.Option(
         "local",
@@ -117,63 +107,14 @@ def main(
         )
 
     source = source_backend_obj.get_source(dataset)
-    source_path = source.resolve()
-    logger.info(f"Describing dataset at {source_path} (backend={source_backend_obj.name})")
 
-    lf = pl.scan_parquet(list(source_path.glob("*.par*")))
-
-    if start_time is not None:
-        lf = lf.filter(pl.col(time_col) >= start_time)
-    if end_time is not None:
-        lf = lf.filter(pl.col(time_col) < end_time)
-
-    if filter_expr:
-        lf = lf.filter(eval(filter_expr))
-    else:
-        exprs: list[pl.Expr] = []
-        if min_cited_by_count is not None:
-            exprs.append(pl.col("cited_by_count") >= min_cited_by_count)
-        if min_referenced_works is not None:
-            exprs.append(pl.col("referenced_works").list.len() >= min_referenced_works)
-        if exprs:
-            lf = lf.filter(pl.all_horizontal(exprs))
-
-    n_buckets = len(buckets)
-    for col in describe_cols:
-        bucket_counts = {
-            f"{buckets[i]}-{buckets[i + 1]}": None for i in range(n_buckets - 1)
-        }
-        weights = {k: v for k, v in bucket_counts.items()}
-        for i in range(n_buckets - 1):
-            bucket_counts[f"{buckets[i]}-{buckets[i + 1]}"] = (
-                lf.filter((pl.col(col) >= buckets[i]) & (pl.col(col) < buckets[i + 1]))
-                .select(pl.len())
-                .collect(engine="streaming")
-                .item()
-            )
-        total = sum([v for v in bucket_counts.values()])
-
-        for k in weights.keys():
-            if bucket_counts[k] == 0:
-                weights[k] = float("nan")
-                continue
-            weights[k] = total / ((n_buckets - 1) * bucket_counts[k])
-
-        proportions = {k: round((v / total) * 100, 1) for k, v in bucket_counts.items()}
-
-        print()
-        logger.info(f"Describing {col}")
-        logger.info("counts: ")
-
-        logger.info([f"{k}:" + f"{v:,}" for k, v in bucket_counts.items()])
-
-        logger.info("proportions: ")
-        logger.info([f"{k}:" + f"{v:,}" for k, v in proportions.items()])
-
-        logger.info("weights: ")
-        logger.info(weights)
-
-        description = lf.select(pl.col(col)).describe()
-        logger.info(description)
-
-    logger.info("Finished Describe")
+    job = DescribeJob(
+        source=source,
+        start_time=start_time,
+        end_time=end_time,
+        time_col=time_col,
+        describe_cols=list(describe_cols),
+        buckets=list(buckets),
+        filter_expr=filter_expr if filter_expr else None,
+    )
+    run_describe_pipeline(job)
