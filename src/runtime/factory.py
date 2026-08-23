@@ -7,12 +7,16 @@ from config.env import Env
 from .base import Runtime
 
 
-def build_runtime(runtime_name: str, env: Env) -> Runtime:
+def build_runtime(runtime_name: str | None, env: Env) -> Runtime:
     """Return a configured runtime backend.
 
-    The ``modal`` module is imported lazily so that local installs without the
-    optional ``modal`` extra continue to work.
+    ``None`` selects the ``[runtime].default`` value from config.toml
+    (falling back to ``"local"``). The ``modal`` module is imported lazily so
+    that local installs without the optional ``modal`` extra continue to work.
     """
+    if runtime_name is None:
+        runtime_name = env.runtime.get("default", "local")
+
     if runtime_name == "local":
         from .local import LocalRuntime
 

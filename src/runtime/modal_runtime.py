@@ -1,7 +1,8 @@
 """Modal runtime: volumes, image, GPU embedder, and remote preprocess dispatch."""
 
 from logging import getLogger
-from typing import Any
+from pathlib import Path
+from typing import Any, TYPE_CHECKING
 
 import modal
 
@@ -14,6 +15,10 @@ from utils.logging import setup_logger
 
 from config.env import Env
 from runtime.base import Runtime, TextEmbedder
+
+if TYPE_CHECKING:
+    from data.pipeline.describe import DescribeJob
+    from data.pipeline.engineer import EngineerJob
 
 logger = getLogger(__name__)
 _ = setup_logger(logger)
@@ -181,6 +186,11 @@ class ModalRuntime:
         logger.debug("ModalRuntime.get_embedder: key=%r kwargs=%r", key, kwargs)
         return _build_modal_embedder(key, **kwargs)
 
+    def get_source(self, root: str | Path, name: str) -> DataSource:
+        # ``root`` is a volume mount root such as "/modal/<volume-label>";
+        # its last segment is the volume label.
+        return ModalDataSource(volume=Path(root).name, name=name)
+
     def run_preprocess(self, job: PreprocessJob) -> DataSource:
         logger.info(
             "ModalRuntime.run_preprocess: dispatching job to Modal project %r",
@@ -191,6 +201,16 @@ class ModalRuntime:
             result = fn.remote(job)
         logger.info("ModalRuntime.run_preprocess: received result from Modal")
         return result
+
+    def run_describe(self, job: DescribeJob) -> None:
+        raise NotImplementedError(
+            "Modal dispatch for describe is added in plan 1.3 step 5."
+        )
+
+    def run_engineer(self, job: EngineerJob) -> DataSource:
+        raise NotImplementedError(
+            "Modal dispatch for engineer is added in plan 1.3 step 5."
+        )
 
 def _embedder_config(key: str) -> EmbedderConfig:
     """Return the configuration for a local embedder registry key."""

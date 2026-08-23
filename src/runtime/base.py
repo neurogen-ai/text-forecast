@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from data.sources.base import DataSource
+
+if TYPE_CHECKING:
+    from data.pipeline.describe import DescribeJob
+    from data.pipeline.engineer import EngineerJob
+    from data.preprocess.pipeline import PreprocessJob
 
 
 @runtime_checkable
@@ -24,6 +30,12 @@ class Runtime(Protocol):
     @property
     def supported_source_backends(self) -> set[str]: ...
 
+    def get_source(self, root: str | Path, name: str) -> DataSource: ...
+
     def get_embedder(self, key: str, **kwargs: Any) -> TextEmbedder: ...
 
-    def run_preprocess(self, job: "PreprocessJob") -> DataSource: ...
+    def run_preprocess(self, job: PreprocessJob) -> DataSource: ...
+
+    def run_describe(self, job: DescribeJob) -> None: ...
+
+    def run_engineer(self, job: EngineerJob) -> DataSource: ...
