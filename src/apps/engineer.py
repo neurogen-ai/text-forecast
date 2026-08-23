@@ -13,7 +13,7 @@ from apps.source_args import (
     source_volume_arg,
 )
 from config.env import load_env
-from data.pipeline.engineer import EngineerJob, run_engineer_pipeline
+from data.pipeline.engineer import EngineerJob
 from data.sources import DataSource, LocalDataSource, SourceBackend
 from runtime import build_runtime
 from utils.logging import setup_logger
@@ -133,13 +133,6 @@ def main(
             f"{source_backend_obj.name!r}"
         )
 
-    if runtime_name == "modal":
-        raise typer.BadParameter(
-            "Modal runtime is not yet supported for engineer. "
-            "Use --runtime local with a Modal volume mounted locally, "
-            "or choose --source-backend local."
-        )
-
     if input_path:
         origin: DataSource = LocalDataSource(
             base_dir=input_path.parent, name=input_path.name
@@ -162,4 +155,4 @@ def main(
         n_partitions=n_partitions,
         dry_run=dry_run,
     )
-    run_engineer_pipeline(job)
+    runtime.run_engineer(job)
