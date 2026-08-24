@@ -22,7 +22,7 @@ from config.env import Env
 from config.experiment import Experiment
 from config.runtime import RunContext
 from data.datasets.text_token_dataset import TextTokenDataset, TextTokenDatasetConfig
-from data.datasets.text_token_dataset import TextTokenDatasetOutput
+from data.datasets.types import TokenBatch
 from data.sources import SourceBackend
 from models import TransformerClass
 from training.checkpointing import MlflowCheckpointProcessor
@@ -50,7 +50,7 @@ def build(
     runtime: RunContext,
     env: Env,
     source_backend: SourceBackend,
-) -> Experiment[TextTokenDatasetOutput]:
+) -> Experiment[TokenBatch]:
     """Build the basic Transformer classifier experiment."""
     device = runtime.device
     dtype = runtime.dtype

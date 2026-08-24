@@ -2,8 +2,8 @@
 
 Unlike ``GraphDataset`` this dataset does **not** build a citation-graph
 neighbourhood; it only concatenates the requested token columns (e.g.
-``title abstract_tokens``) and returns ``(x, mask, y, weight, id)`` suitable
-for ``TransformerClass`` and the binary classification strategy.
+``title abstract_tokens``) and returns a ``TokenBatch`` suitable for
+``TransformerClass`` and the binary classification strategy.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date
 from logging import getLogger
 from pathlib import Path
-from typing import NamedTuple, Self, override
+from typing import Self, override
 
 import polars as pl
 import torch
@@ -20,20 +20,13 @@ from pydantic import BaseModel, ConfigDict
 from torch import Tensor
 from torch.utils.data import Dataset
 
+from data.datasets.types import TokenBatch
 from data.sources import DataSource
 from utils import component
 from utils.logging import setup_logger
 
 logger = getLogger(__name__)
 _ = setup_logger(logger)
-
-
-class TextTokenDatasetOutput(NamedTuple):
-    id: Tensor
-    x: Tensor
-    y: Tensor
-    mask: Tensor
-    weight: Tensor
 
 
 class TextTokenDatasetConfig(BaseModel):
@@ -61,7 +54,7 @@ class TextTokenDatasetConfig(BaseModel):
 
 
 @component
-class TextTokenDataset(Dataset[TextTokenDatasetOutput]):
+class TextTokenDataset(Dataset[TokenBatch]):
     """Token-id dataset for text classification.
 
     Assumes the parquet source already contains tokenised list columns
@@ -154,7 +147,7 @@ class TextTokenDataset(Dataset[TextTokenDatasetOutput]):
         return len(self.df)
 
     @override
-    def __getitem__(self, idx: int) -> TextTokenDatasetOutput:
+    def __getitem__(self, idx: int) -> TokenBatch:
         row = self.df.row(idx, named=True)
         x: Tensor = torch.tensor(row["x"], dtype=torch.long)
         y_raw: Tensor = torch.tensor(row["y"], dtype=torch.float32).flatten()
@@ -168,7 +161,9 @@ class TextTokenDataset(Dataset[TextTokenDatasetOutput]):
         if self.truncate and x.size(0) > self.max_len:
             x = x[: self.max_len]
 
-        mask = (x != self.pad_value).bool().unsqueeze(0).expand(self.max_len, -1)
+        # Plain (T,) key-padding mask; collated to (B, T). Attention layers
+        # broadcast to head shape themselves (plan 1.4.1).
+        mask = (x != self.pad_value).bool()
 
         id_out = torch.tensor(float("nan"))
         if self.return_id:
@@ -180,7 +175,7 @@ class TextTokenDataset(Dataset[TextTokenDatasetOutput]):
                 self.weights[y.long()].item(), dtype=torch.float32
             )
 
-        return TextTokenDatasetOutput(
+        return TokenBatch(
             id=id_out,
             x=x,
             y=y,
