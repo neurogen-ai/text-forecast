@@ -7,8 +7,8 @@ from typing import Any
 import modal
 
 from config.env import load_env
-from data.pipeline.describe import DescribeJob
-from data.pipeline.engineer import EngineerJob
+from data.pipeline.describe import DescribeJob, run_describe_pipeline
+from data.pipeline.engineer import EngineerJob, run_engineer_pipeline
 from data.preprocess.embed_modal import ModalEmbedder
 from data.preprocess.embed_huggingface import EMBEDDERS, EmbedderConfig
 from data.preprocess.pipeline import PreprocessJob, run_preprocess_pipeline
@@ -175,6 +175,44 @@ def run_preprocess_remote(job: PreprocessJob) -> DataSource:
     return result
 
 
+@app.function(
+    volumes={f"/modal/{VOLUME_LABEL}": volume},
+    image=preprocess_image,
+    max_containers=1,
+    timeout=3600,
+)
+def run_describe_remote(job: DescribeJob) -> None:
+    """Container entry point for the describe pipeline.
+
+    The staged volume is mounted at the same path ``ModalDataSource.resolve()``
+    returns, so the job's ``DataSource`` resolves inside the container.
+    """
+    logger.info(
+        "run_describe_remote: starting describe job source=%r",
+        getattr(job.source, "name", job.source),
+    )
+    run_describe_pipeline(job)
+    logger.info("run_describe_remote: describe job completed")
+
+
+@app.function(
+    volumes={f"/modal/{VOLUME_LABEL}": volume},
+    image=preprocess_image,
+    max_containers=1,
+    timeout=3600,
+)
+def run_engineer_remote(job: EngineerJob) -> DataSource:
+    """Container entry point for the engineer pipeline."""
+    logger.info(
+        "run_engineer_remote: starting engineer job origin=%r output=%r",
+        getattr(job.origin, "name", job.origin),
+        getattr(job.output, "name", job.output),
+    )
+    result = run_engineer_pipeline(job)
+    logger.info("run_engineer_remote: engineer job completed")
+    return result
+
+
 class ModalRuntime:
     """Modal backend: volume sources, GPU embedder, and remote job dispatch."""
 
@@ -212,14 +250,25 @@ class ModalRuntime:
         return result
 
     def run_describe(self, job: DescribeJob) -> None:
-        raise NotImplementedError(
-            "Modal dispatch for describe is added in plan 1.3 step 5."
+        logger.info(
+            "ModalRuntime.run_describe: dispatching job to Modal project %r",
+            self._project,
         )
+        with modal.enable_output():
+            fn = modal.Function.from_name(MODAL_APP_NAME, "run_describe_remote")
+            fn.remote(job)
+        logger.info("ModalRuntime.run_describe: received result from Modal")
 
     def run_engineer(self, job: EngineerJob) -> DataSource:
-        raise NotImplementedError(
-            "Modal dispatch for engineer is added in plan 1.3 step 5."
+        logger.info(
+            "ModalRuntime.run_engineer: dispatching job to Modal project %r",
+            self._project,
         )
+        with modal.enable_output():
+            fn = modal.Function.from_name(MODAL_APP_NAME, "run_engineer_remote")
+            result = fn.remote(job)
+        logger.info("ModalRuntime.run_engineer: received result from Modal")
+        return result
 
 def _embedder_config(key: str) -> EmbedderConfig:
     """Return the configuration for a local embedder registry key."""
