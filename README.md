@@ -201,27 +201,39 @@ Data pre-processing CLI and custom PyTorch Datasets/Loaders forming a flexible E
 >
 > </details>
 
-</details>
+> ## v1.1
+> <details>
+> <summary><b>v1.1.0 Migrate remaining apps + robust preprocessing + local/Modal prep</b></summary>
+>
+> - Migrate `preprocess`, `describe`, and `engineer` apps to load machine settings via `config.env.load_env(...)`
+> - Add `[env]` CLI override flags to all remaining apps
+> - Remove the temporary Phase-0 `config/env.py` `__getattr__` shim
+> - Make preprocessing robust: lazy embedder loading, pluggable embedding models, CPU/CUDA support
+> - Introduce `Runtime` and `DataSource` abstractions so local and Modal execution share the same app code
+>
+> </details>
 
-## v1.1
-<details>
-<summary><b>v1.1.0 Migrate remaining apps + robust preprocessing + local/Modal prep (Planned)</b></summary>
+> ## v1.2
+> <details>
+> <summary><b>v1.2.0 Local / Modal runtime split</b></summary>
+>
+> - Implement `modal` runtime backend using the abstractions from v1.1
+> - Add Modal volume-backed data sources and Modal GPU embedder
+> - Run `preprocess` with `--runtime modal` (train/eval stay local; see v2.0)
+>
+> </details>
 
-- Migrate `preprocess`, `describe`, and `engineer` apps to load machine settings via `config.env.load_env(...)`
-- Add `[env]` CLI override flags to all remaining apps
-- Remove the temporary Phase-0 `config/env.py` `__getattr__` shim
-- Make preprocessing robust: lazy embedder loading, pluggable embedding models, CPU/CUDA support
-- Introduce `Runtime` and `DataSource` abstractions so local and Modal execution share the same app code
-
-</details>
-
-## v1.2
-<details>
-<summary><b>v1.2.0 Local / Modal runtime split (Planned)</b></summary>
-
-- Implement `modal` runtime backend using the abstractions from v1.1
-- Add Modal volume-backed data sources and Modal GPU embedder
-- Run `train`, `eval`, and `preprocess`, with `--runtime modal`
+> ## v1.3
+> <details>
+> <summary><b>v1.3.0 Modal runtime for describe and engineer</b></summary>
+>
+> - Runtime-agnostic `DescribeJob` / `EngineerJob` pipelines under `src/data/pipeline/`, moved out of the apps
+> - `Runtime` protocol extended with `get_source`, `run_describe`, `run_engineer`; local and Modal backends implement it
+> - `describe` and `engineer` dispatch through the runtime with `--runtime modal`; no app-side runtime branching
+> - Describe and engineer run as whole CPU jobs in the shared `citef-data` Modal app against the staged volume
+> - Engineer writes `metadata.json` recording the runtime that produced the dataset
+>
+> </details>
 
 </details>
 
@@ -249,12 +261,18 @@ citation-forecast/
 │   │   ├── loader.py           # experiment module resolution/loading
 │   │   ├── runtime.py          # RunContext (device/dtype/compile/subsample)
 │   │   └── env.py              # Env dataclass loaded from config.toml
+│   ├── runtime/                # execution backends for local/Modal jobs
+│   │   ├── base.py             # Runtime + TextEmbedder protocols
+│   │   ├── local.py            # LocalRuntime
+│   │   ├── modal_runtime.py    # volumes, GPU embedder, remote job dispatch
+│   │   └── factory.py          # build_runtime()
 │   ├── data/
 │   │   ├── datasets/           # PyTorch datasets
 │   │   ├── formaters/          # per-row value transforms
 │   │   ├── samplers/           # samplers for PyTorch Datasets
-│   │   ├── sources/            # DataSource protocol + LocalStagedSource
-│   │   └── preprocess/         # clean/tokenise and stage dataset selections
+│   │   ├── sources/            # DataSource protocol + local/modal backends
+│   │   ├── preprocess/         # clean/tokenise and stage dataset selections
+│   │   └── pipeline/           # runtime-agnostic describe/engineer jobs
 │   ├── models/                 # PyTorch modules with Pydantic config schemas
 │   └── training/
 │       ├── engine.py           # owns the epoch/batch loop
