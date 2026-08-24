@@ -1,3 +1,7 @@
+# legacy: pre-1.4 model, not wired to any experiment. Still uses the
+# forward(x, mask) signature; migrate onto models.protocols.Model with a
+# canonical batch from data.datasets.types before reuse.
+
 from pydantic import BaseModel, PositiveInt 
 import torch
 import torch.nn as nn

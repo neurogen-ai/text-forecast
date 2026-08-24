@@ -6,6 +6,8 @@ Models on the skip list are excluded deliberately, with the reason recorded
 here so exclusion stays visible (plan 1.4.2 migrates or retires them).
 """
 
+from pathlib import Path
+
 import pytest
 import torch
 from torch import Tensor
@@ -101,15 +103,22 @@ def test_transformer_lm_generate_smoke() -> None:
     assert len(tokens) == 3 * 4
 
 
-# Deliberate exclusions (migrate in 1.4.2 or mark ``# legacy:``):
-#
-# - Abstractor, GraphRecurrent, TransformerVarianceRegressor, HR_AHEAD_BINARY:
-#   already batch-style but still index ``batch.mask[:, 0, :]`` assuming the
-#   old square ``(B, T, T)`` mask; they break against real data until their
-#   SDPA calls broadcast the plain ``(B, T)`` mask.
-# - AbstractorLM(2), AbstractorDLM, H_ATTN(_SINGLE), H_HR, H_R_Smooth,
-#   HR_RHEAD_BINARY, MMLP(2), RealRNN(_fast), RF_*, Wordenizer: still
-#   ``forward(x, mask)`` legacy signature; migrate in 1.4.2.
-@pytest.mark.skip(reason="not yet migrated to TokenBatch / plain mask (1.4.2)")
-def test_remaining_models_placeholder() -> None:
-    raise AssertionError("placeholder; replaced by per-model tests in 1.4.2")
+MIGRATED = {"transformerClass.py", "transformerLM.py"}
+NON_MODEL_MODULES = {"__init__.py", "protocols.py"}
+
+
+def test_every_model_is_migrated_or_visibly_legacy() -> None:
+    """Each module under src/models/ must either be covered by a conformance
+    test here or carry an explicit ``# legacy:`` header (plan 1.4.2). Exclusion
+    from the contract must be visible, never accidental."""
+    models_dir = Path(__file__).parents[1] / "src" / "models"
+    unaccounted = []
+    for path in sorted(models_dir.glob("*.py")):
+        if path.name in NON_MODEL_MODULES or path.name in MIGRATED:
+            continue
+        header = path.read_text()[:600]
+        if not header.startswith("# legacy:"):
+            unaccounted.append(path.name)
+    assert not unaccounted, (
+        f"models missing protocol migration or '# legacy:' header: {unaccounted}"
+    )
