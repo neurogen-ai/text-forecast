@@ -11,8 +11,9 @@ import torch
 from torch import Tensor
 
 from data.datasets.types import TokenBatch
-from models import TransformerClass
+from models import TransformerClass, TransformerLM
 from models.transformerClass import ModelConfig
+from models.transformerLM import ModelConfig as LMModelConfig
 
 B = 4
 T = 8
@@ -49,13 +50,55 @@ def test_transformer_class_conforms() -> None:
         embed_dim=16,
         hidden_dim=32,
         n_out=1,
-        dropout=0.0,
+        dropout=0.01,
     )
     model = TransformerClass(config, torch.device("cpu"), torch.float32)
     model.eval()
     with torch.no_grad():
         out = model.forward(synthetic_token_batch())
     check_logits(model, out, config.n_out)
+
+
+def test_transformer_lm_conforms() -> None:
+    config = LMModelConfig(
+        model_name="test-lm",
+        pad_token_id=0,
+        n_heads=2,
+        n_layers=1,
+        vocab_size=VOCAB,
+        embed_dim=16,
+        hidden_dim=32,
+        n_out=VOCAB,
+        dropout=0.01,
+    )
+    model = TransformerLM(config, torch.device("cpu"), torch.float32)
+    model.eval()
+    with torch.no_grad():
+        out = model.forward(synthetic_token_batch())
+    logits = getattr(out, "logits", None)
+    assert isinstance(logits, Tensor), f"expected .logits tensor, got {type(out)}"
+    # LM head emits per-position logits: (B, T, n_out).
+    assert logits.shape == (B, T, config.n_out), f"bad logits shape {tuple(logits.shape)}"
+
+
+def test_transformer_lm_generate_smoke() -> None:
+    config = LMModelConfig(
+        model_name="test-lm",
+        pad_token_id=0,
+        n_heads=2,
+        n_layers=1,
+        vocab_size=VOCAB,
+        embed_dim=16,
+        hidden_dim=32,
+        n_out=VOCAB,
+        dropout=0.01,
+    )
+    model = TransformerLM(config, torch.device("cpu"), torch.float32)
+    model.eval()
+    with torch.no_grad():
+        tokens = model.generate(synthetic_token_batch().x[:, :4], max_len=3)
+    # generate() appends one token per batch row per step.
+    assert len(tokens) == 3 * 4
 
 
 # Deliberate exclusions (migrate in 1.4.2 or mark ``# legacy:``):
@@ -65,9 +108,8 @@ def test_transformer_class_conforms() -> None:
 #   old square ``(B, T, T)`` mask; they break against real data until their
 #   SDPA calls broadcast the plain ``(B, T)`` mask.
 # - AbstractorLM(2), AbstractorDLM, H_ATTN(_SINGLE), H_HR, H_R_Smooth,
-#   HR_RHEAD_BINARY, MMLP(2), RealRNN(_fast), RF_*, Wordenizer,
-#   TransformerLM: still ``forward(x, mask)`` legacy signature; migrate in
-#   1.4.2.
+#   HR_RHEAD_BINARY, MMLP(2), RealRNN(_fast), RF_*, Wordenizer: still
+#   ``forward(x, mask)`` legacy signature; migrate in 1.4.2.
 @pytest.mark.skip(reason="not yet migrated to TokenBatch / plain mask (1.4.2)")
 def test_remaining_models_placeholder() -> None:
     raise AssertionError("placeholder; replaced by per-model tests in 1.4.2")

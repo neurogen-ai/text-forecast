@@ -1,11 +1,14 @@
-from typing import Literal
+from typing import Literal, NamedTuple
 
 import torch
 import torch.nn as nn
+from data.datasets.types import TokenBatch
 from pydantic import BaseModel, PositiveFloat, PositiveInt
 from torch import Tensor
 
 from utils import component
+
+from .protocols import Model
 
 
 class ModelConfig(BaseModel):
@@ -114,10 +117,16 @@ class TransformerBlock(nn.Module):
         return x
 
 
+class Output(NamedTuple):
+    """Language-modelling head output. ``logits`` is ``(B, T, n_out)``."""
+
+    logits: Tensor
+    probs: Tensor
+
+
 @component
-class TransformerLM(nn.Module):
-    filepath = __file__
-    config_schema = ModelConfig
+class TransformerLM(nn.Module, Model[ModelConfig, TokenBatch, Output]):
+    config = ModelConfig
 
     def __init__(self, config: ModelConfig, device: torch.device, dtype: torch.dtype):
         super().__init__()
@@ -146,8 +155,9 @@ class TransformerLM(nn.Module):
             config.embed_dim, config.n_out, device=device, dtype=dtype
         )
 
-    def forward(self, x: Tensor, mask: Tensor) -> tuple[Tensor, Tensor]:
-        # mask is (B, T) bool key-padding.
+    def forward(self, batch: TokenBatch) -> Output:
+        # batch.mask is (B, T) bool key-padding.
+        x, mask = batch.x, batch.mask
         embeddings = self.embed(x)
         B, T, C = embeddings.shape
         if self.training:
@@ -169,20 +179,24 @@ class TransformerLM(nn.Module):
         logits = self.head(out)
         probs = torch.nn.functional.softmax(logits, dim=2)
 
-        return logits, probs
+        return Output(logits=logits, probs=probs)
 
-    def generate(self, prompt: Tensor, max_len: int):
-        out = []
-        probs = []
-        tokens = []
-        for i in range(max_len):
+    def generate(self, prompt: Tensor, max_len: int) -> list[int]:
+        out: list[int] = []
+        for _ in range(max_len):
             B, T = prompt.shape
-            mask = torch.ones_like(prompt).bool()
-            logits, probs = self.forward(prompt, mask)
-            tokens = torch.argmax(probs, dim=2)
+            batch = TokenBatch(
+                id=torch.arange(B),
+                x=prompt,
+                y=torch.zeros((B, 1)),
+                mask=torch.ones_like(prompt).bool(),
+                weight=None,
+            )
+            output = self.forward(batch)
+            tokens = torch.argmax(output.probs, dim=2)
             next = tokens[:, -1]
             out += next.tolist()
-            prompt = torch.cat([prompt, next.unsqueeze(0)], dim=1)
+            prompt = torch.cat([prompt, next.unsqueeze(1)], dim=1)
 
         return out
 
