@@ -46,10 +46,12 @@ optionally bucketed by value ranges (`--bucket`) and filtered by time window
 ## engineer
 
 Feature engineering pass. Computes column lengths (`--calc-len`, written as
-`<col>_len`) and years-to-first-citation (on by default). Input comes from
-`--input-path` or `--input-dataset`; output defaults to `<input>-engineered`,
-overridable with `--output` (path or dataset name). `--dry-run` uses a 500-row
-slice.
+`<col>_len`) and years-to-first-citation (on by default; needs date-typed
+`publication_date` and list-typed `referenced_works`/`counts_by_year_years`).
+Input comes from `--input-path` or `--input-dataset`; output defaults to
+`<input>-engineered`, overridable with `--output` (path or dataset name);
+`--n-partitions` sets the partition split. Supports `--runtime modal`. Writes
+`metadata.json` with the job parameters and runtime. `--dry-run` slices 50 rows.
 
 ## eval
 

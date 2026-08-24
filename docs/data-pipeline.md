@@ -104,12 +104,17 @@ partitions by default, and computes:
     dates per cited id, join back, then derive `cited_by_delta_years_first`
     and `cited_by_delta_days_first`.
 
+The years-to-first path requires `publication_date` as a date type and
+list-typed `referenced_works` and `counts_by_year_years`. Older staged datasets
+that store these as string/binary columns fail here and need re-staging.
+
 The file also contains `run_dbscan_on_chunk`, which clusters per-paper citation
 distributions with DBSCAN (eps=15, weighted by counts) to find citation-count
 clusters, centroids, member sizes, and noise ratio. It is not called by the
 main pipeline loop yet.
 
-Output is zstd parquet parts plus `metadata.json`.
+Output is zstd parquet parts plus `metadata.json` recording the job parameters
+and the runtime that produced the dataset (`local` or `modal`).
 
 ## Describe (`data/pipeline/describe.py`)
 
