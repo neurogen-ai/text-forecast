@@ -123,7 +123,7 @@ def main(
     )
 
     if runtime_name is None:
-        runtime_name = env.runtime.get("default", "local")
+        runtime_name = str(env.runtime.get("default", "local"))
     runtime = build_runtime(runtime_name, env)
 
     supported = getattr(runtime, "supported_source_backends", {"local"})
@@ -154,5 +154,6 @@ def main(
         years_to_first=years_to_first,
         n_partitions=n_partitions,
         dry_run=dry_run,
+        runtime_name=runtime_name,
     )
     runtime.run_engineer(job)

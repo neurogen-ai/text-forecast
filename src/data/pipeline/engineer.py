@@ -6,6 +6,7 @@ Modal container without the app knowing which.
 
 from __future__ import annotations
 
+import json
 import math
 import os
 from dataclasses import dataclass, field
@@ -45,6 +46,7 @@ class EngineerJob:
     years_to_first: bool = True
     n_partitions: int = 64
     dry_run: bool = False
+    runtime_name: str = "local"
 
 
 def run_dbscan_on_chunk(df_chunk: pl.DataFrame) -> pl.DataFrame:
@@ -200,5 +202,15 @@ def run_engineer_pipeline(job: EngineerJob) -> DataSource:
             n_written = pl.scan_parquet(output_fname).select(pl.len()).collect(engine="streaming").item()
             progress_bar.update(progress, advance=n_written)
             progress_bar.update(part_progress, advance=1)
+
+    metadata = {
+        "len_cols": list(job.len_cols),
+        "years_to_first": job.years_to_first,
+        "n_partitions": job.n_partitions,
+        "dry_run": job.dry_run,
+        "runtime": job.runtime_name,
+    }
+    with open(output_path / "metadata.json", "w") as f:
+        json.dump(metadata, f)
 
     return job.output
