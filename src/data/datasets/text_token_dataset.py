@@ -18,7 +18,7 @@ import torch
 import torch.nn as nn
 from pydantic import BaseModel, ConfigDict
 from torch import Tensor
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, default_collate  # type: ignore[reportUnknownVariableType]
 
 from data.datasets.types import TokenBatch
 from data.sources import DataSource
@@ -169,7 +169,9 @@ class TextTokenDataset(Dataset[TokenBatch]):
         if self.return_id:
             id_out = torch.tensor(row[self.id_col])
 
-        weight = torch.tensor(float("nan"))
+        # Optional weights (sub-plan 1.4.6): None when the dataset has no
+        # weights configured, a scalar ``(B,)``-collated tensor otherwise.
+        weight: Tensor | None = None
         if self.weights is not None:
             weight = torch.tensor(
                 self.weights[y.long()].item(), dtype=torch.float32
@@ -182,3 +184,23 @@ class TextTokenDataset(Dataset[TokenBatch]):
             mask=mask,
             weight=weight,
         )
+
+
+def token_batch_collate(batches: list[TokenBatch]) -> TokenBatch:
+    """Collate a list of per-item ``TokenBatch`` into a single batch.
+
+    Needed because ``default_collate`` cannot stack a ``None`` weight field.
+    Tensor fields use the default collator; ``weight`` stays ``None`` when the
+    dataset emits none, else stacks into ``(B,)``.
+    """
+    weight: Tensor | None = batches[0].weight
+    if weight is not None:
+        weight = default_collate([b.weight for b in batches])  # type: ignore[arg-type]
+
+    return TokenBatch(
+        id=default_collate([b.id for b in batches]),  # type: ignore[arg-type]
+        x=default_collate([b.x for b in batches]),  # type: ignore[arg-type]
+        y=default_collate([b.y for b in batches]),  # type: ignore[arg-type]
+        mask=default_collate([b.mask for b in batches]),  # type: ignore[arg-type]
+        weight=weight,
+    )

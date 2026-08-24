@@ -1,6 +1,5 @@
 from typing import Protocol, override
 
-import torch
 from torch import Tensor
 from torch.nn import Module
 from torch.nn.functional import binary_cross_entropy_with_logits
@@ -28,13 +27,10 @@ class BinaryCrossEntropyLoss(Module, LossFn[TokenBatch, BCEOutput]):
 
     @override
     def __call__(self, output: BCEOutput, batch: TokenBatch) -> Tensor:
-        # weight is None once datasets emit Optional weights (1.4.6); until
-        # then the NaN sentinel marks "unused".
+        # Optional weight (sub-plan 1.4.6): datasets emit None when unused.
         weight = batch.weight
         return binary_cross_entropy_with_logits(
             input=output.logits.squeeze(-1),
             target=batch.y.squeeze(-1),
-            weight=weight.squeeze(-1)
-            if weight is not None and not torch.any(torch.isnan(weight))
-            else None,
+            weight=weight.squeeze(-1) if weight is not None else None,
         )

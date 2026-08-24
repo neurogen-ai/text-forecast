@@ -21,7 +21,11 @@ from torch.utils.data import DataLoader
 from config.env import Env
 from config.experiment import Experiment
 from config.runtime import RunContext
-from data.datasets.text_token_dataset import TextTokenDataset, TextTokenDatasetConfig
+from data.datasets.text_token_dataset import (
+    TextTokenDataset,
+    TextTokenDatasetConfig,
+    token_batch_collate,
+)
 from data.datasets.types import TokenBatch
 from data.sources import SourceBackend
 from models import TransformerClass
@@ -150,6 +154,7 @@ def build(
         pin_memory=True,
         shuffle=False,
         drop_last=True,
+        collate_fn=token_batch_collate,
     )
     val_loader = DataLoader(
         val_dataset,
@@ -160,6 +165,7 @@ def build(
         pin_memory=True,
         shuffle=False,
         drop_last=True,
+        collate_fn=token_batch_collate,
     )
 
     checkpoints = MlflowCheckpointProcessor(
