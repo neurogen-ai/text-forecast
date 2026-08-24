@@ -3,6 +3,8 @@ from typing import Protocol, TypeVar, cast
 import torch
 from torch import Tensor
 
+from data.datasets.types import TokenBatch
+
 from .base import BaseStrategy, StrategyConfig
 
 
@@ -13,36 +15,26 @@ class _ForwardOutput(Protocol):
     probs: Tensor
 
 
-class _Batch(Protocol):
-    """Batch layout used by the classification train/val steps."""
-
-    id: Tensor
-    x: Tensor
-    y: Tensor
-    mask: Tensor
-    weight: Tensor
+T_Batch = TypeVar("T_Batch", bound=TokenBatch)
 
 
-T_Batch = TypeVar("T_Batch", bound=_Batch)
-
-
-class ClassificationStrategy(BaseStrategy[_Batch]):
-    """Binary classification strategy.
+class ClassificationStrategy(BaseStrategy[TokenBatch]):
+    """Binary classification strategy over :class:`TokenBatch`.
 
     Migrates the historical ``ClassificationTrainer._step`` and
     ``ClassificationEvaluator._step`` logic verbatim (F1/F3), with batch-level
     metric logging owned by the tracker.
     """
 
-    def move_to_device(self, batch: _Batch) -> _Batch:
+    def move_to_device(self, batch: TokenBatch) -> TokenBatch:
         """Move a NamedTuple batch to the strategy device via the CUDA stream."""
         batch_type = type(batch)
         with self.stream:
             moved = tuple(self._to_device(item, self.device) for item in batch)
         self.stream_sync()
-        return cast(_Batch, batch_type(*moved))  # type: ignore[call-overload]
+        return cast(TokenBatch, batch_type(*moved))  # type: ignore[call-overload]
 
-    def training_step(self, batch: _Batch) -> float:
+    def training_step(self, batch: TokenBatch) -> float:
         """One training step: forward, backward, optimizer step, logging."""
         self.model.train()
 
@@ -86,7 +78,7 @@ class ClassificationStrategy(BaseStrategy[_Batch]):
 
         return loss_cpu_item
 
-    def validation_step(self, batch: _Batch) -> float:
+    def validation_step(self, batch: TokenBatch) -> float:
         """One validation step: no gradients, prefix stores are ``val_*``."""
         self.model.eval()
 

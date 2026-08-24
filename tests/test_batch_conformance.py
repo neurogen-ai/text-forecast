@@ -1,0 +1,73 @@
+"""Conformance test: every migrated ``@component`` model must accept a
+synthetic canonical batch (plan 1.4.1) and return a value exposing
+``.logits``.
+
+Models on the skip list are excluded deliberately, with the reason recorded
+here so exclusion stays visible (plan 1.4.2 migrates or retires them).
+"""
+
+import pytest
+import torch
+from torch import Tensor
+
+from data.datasets.types import TokenBatch
+from models import TransformerClass
+from models.transformerClass import ModelConfig
+
+B = 4
+T = 8
+VOCAB = 64
+
+
+def synthetic_token_batch() -> TokenBatch:
+    generator = torch.Generator().manual_seed(0)
+    x = torch.randint(0, VOCAB, (B, T), generator=generator)
+    # Left-pad half of each row so the key-padding mask is exercised.
+    lengths = torch.randint(T // 2, T + 1, (B,), generator=generator)
+    mask = torch.arange(T)[None, :] < lengths[:, None]
+    x = x * mask  # pad positions become id 0
+    return TokenBatch(
+        id=torch.arange(B),
+        x=x,
+        y=torch.randint(0, 2, (B, 1), generator=generator).float(),
+        mask=mask,
+        weight=None,
+    )
+
+
+def check_logits(model: object, out: object, n_out: int) -> None:
+    logits = getattr(out, "logits", None)
+    assert isinstance(logits, Tensor), f"expected .logits tensor, got {type(out)}"
+    assert logits.shape == (B, n_out), f"bad logits shape {tuple(logits.shape)}"
+
+
+def test_transformer_class_conforms() -> None:
+    config = ModelConfig(
+        n_heads=2,
+        n_layers=2,
+        vocab_size=VOCAB,
+        embed_dim=16,
+        hidden_dim=32,
+        n_out=1,
+        dropout=0.0,
+    )
+    model = TransformerClass(config, torch.device("cpu"), torch.float32)
+    model.eval()
+    with torch.no_grad():
+        out = model.forward(synthetic_token_batch())
+    check_logits(model, out, config.n_out)
+
+
+# Deliberate exclusions (migrate in 1.4.2 or mark ``# legacy:``):
+#
+# - Abstractor, GraphRecurrent, TransformerVarianceRegressor, HR_AHEAD_BINARY:
+#   already batch-style but still index ``batch.mask[:, 0, :]`` assuming the
+#   old square ``(B, T, T)`` mask; they break against real data until their
+#   SDPA calls broadcast the plain ``(B, T)`` mask.
+# - AbstractorLM(2), AbstractorDLM, H_ATTN(_SINGLE), H_HR, H_R_Smooth,
+#   HR_RHEAD_BINARY, MMLP(2), RealRNN(_fast), RF_*, Wordenizer,
+#   TransformerLM: still ``forward(x, mask)`` legacy signature; migrate in
+#   1.4.2.
+@pytest.mark.skip(reason="not yet migrated to TokenBatch / plain mask (1.4.2)")
+def test_remaining_models_placeholder() -> None:
+    raise AssertionError("placeholder; replaced by per-model tests in 1.4.2")
