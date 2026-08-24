@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from datetime import date
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Self, override
+from typing import Any, Literal, Self, override
 
 import polars as pl
 from pydantic import BaseModel, ConfigDict
@@ -38,7 +38,7 @@ class CitationGraphDatasetConfig(BaseModel):
     pad: bool
     pad_value: Any
     truncate: bool
-    truncate_method: str
+    truncate_method: Literal["truncate", "drop"]
     name: str
     auto_remove: bool
     time_col: str
@@ -209,9 +209,20 @@ class GraphDataset[T_Config](Dataset[CitationGraphDatasetOutput]):
         if self.t_start is not None and config.time_col:
             lf = lf.filter((pl.col(self.time_col) >= self.t_start))
 
-        if self.truncate and self.truncate_method == "drop":
-            lf = lf.filter(pl.col("x").list.len() <= self.max_len)
-            lf = lf.filter(pl.col("graph_x").list.len() <= self.graph_max_len)
+        if self.truncate:
+            over_x = pl.col("x").list.len() > self.max_len
+            over_g = pl.col("graph_x").list.len() > self.graph_max_len
+            over = over_x | over_g
+            n_over: int | None = lf.select(over.sum()).collect(engine="streaming").item()
+            if self.truncate_method == "drop":
+                logger.info(
+                    f"{self.name}: dropping {n_over} rows where x > {self.max_len} or graph_x > {self.graph_max_len}"
+                )
+                lf = lf.filter(~over)
+            else:
+                logger.info(
+                    f"{self.name}: {n_over} rows exceed max_len/graph_max_len and will be truncated per item"
+                )
 
         if self.subsample is not None:
             logger.info(f"Taking {self.subsample} subsamples")

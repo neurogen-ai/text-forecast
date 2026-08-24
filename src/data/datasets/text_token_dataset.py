@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict
 from torch import Tensor
 from torch.utils.data import Dataset, default_collate  # type: ignore[reportUnknownVariableType]
 
+from data.datasets.truncation import TruncateMethod, apply_truncation_policy
 from data.datasets.types import TokenBatch
 from data.sources import DataSource
 from utils import component
@@ -41,7 +42,7 @@ class TextTokenDatasetConfig(BaseModel):
     pad_token_id: int
     pad: bool = True
     truncate: bool = True
-    truncate_method: str = "drop"
+    truncate_method: TruncateMethod = "truncate"
     name: str
     auto_remove: bool = True
     time_col: str | None = "publication_date"
@@ -79,7 +80,6 @@ class TextTokenDataset(Dataset[TokenBatch]):
         self.pad_value = config.pad_token_id
         self.pad = config.pad
         self.truncate = config.truncate
-        self.truncate_method = config.truncate_method
         self.name = config.name
         self.return_id = config.return_id
         self.id_col = config.id_col
@@ -121,8 +121,13 @@ class TextTokenDataset(Dataset[TokenBatch]):
             y=pl.concat_list(config.y),
         )
 
-        if self.truncate and self.truncate_method == "drop":
-            lf = lf.filter(pl.col("x").list.len() <= self.max_len)
+        lf = apply_truncation_policy(
+            lf,
+            name=self.name,
+            limits={"x": self.max_len},
+            truncate=self.truncate,
+            method=config.truncate_method,
+        )
 
         if self.subsample is not None:
             logger.info(f"{self.name}: taking {self.subsample} subsamples")

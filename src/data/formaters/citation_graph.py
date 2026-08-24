@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 import torch
 import torch.nn as nn
@@ -35,7 +35,7 @@ class CitationGraphFormater(Formater[Mapping[str, Any], CitationGraphDatasetOutp
     pad_token_id: int
     pad: bool = True
     truncate: bool = True
-    truncate_method: str = "drop"
+    truncate_method: Literal["truncate", "drop"] = "drop"
     return_mask: bool = True
     return_id: bool = False
     weights: Tensor | None = None

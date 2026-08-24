@@ -3,7 +3,7 @@ import shutil
 from datetime import date
 from logging import getLogger
 from pathlib import Path
-from typing import NamedTuple, Protocol, override
+from typing import Literal, NamedTuple, Protocol, override
 
 import matplotlib.pyplot as plt
 import polars as pl
@@ -35,7 +35,7 @@ class PolarsDatasetConfig(BaseModel):
     pad: bool
     pad_token_id: int
     truncate: bool
-    truncate_method: str
+    truncate_method: Literal["truncate", "drop"]
     name: str
     auto_remove: bool
     time_col: str
@@ -164,14 +164,26 @@ class PolarsDataset[T_Config](Dataset[PolarsDatasetOutput]):
 
             lf = lf.drop_nulls(columns)
 
-            if self.truncate and self.truncate_method == "drop":
+            if self.truncate:
                 lf = lf.with_columns(total_len=pl.lit(0, dtype=pl.Int32))
 
                 for col in self.x:
                     lf = lf.with_columns(
                         total_len=pl.col("total_len") + pl.col(col).list.len()
                     )
-                lf = lf.filter(pl.col("total_len") <= self.max_len)
+                over = pl.col("total_len") > self.max_len
+                n_over: int | None = (
+                    lf.select(over.sum()).collect(engine="streaming").item()
+                )
+                if self.truncate_method == "drop":
+                    logger.info(
+                        f"{self.name}: dropping {n_over} rows with combined x length > {self.max_len}"
+                    )
+                    lf = lf.filter(~over)
+                else:
+                    logger.info(
+                        f"{self.name}: {n_over} rows exceed max_len={self.max_len} and will be truncated per item"
+                    )
                 lf = lf.drop("total_len")
 
             if self.filter is not None:
