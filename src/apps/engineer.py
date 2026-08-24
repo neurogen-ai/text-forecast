@@ -49,8 +49,8 @@ def _resolve_output_source(
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
-    input_path: Path = typer.Option(
-        "",
+    input_path: Path | None = typer.Option(
+        None,
         "--input-path",
         "-i",
         help="Path to input data (local filesystem only)",
