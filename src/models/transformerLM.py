@@ -118,10 +118,12 @@ class TransformerBlock(nn.Module):
 
 
 class Output(NamedTuple):
-    """Language-modelling head output. ``logits`` is ``(B, T, n_out)``."""
+    """Language-modelling head output. ``logits`` is ``(B, T, n_out)``.
+
+    Logits only (sub-plan 1.4.3); softmax happens where needed.
+    """
 
     logits: Tensor
-    probs: Tensor
 
 
 @component
@@ -177,9 +179,7 @@ class TransformerLM(nn.Module, Model[ModelConfig, TokenBatch, Output]):
         out = nn.functional.rms_norm(out, (out.size(-1),))
 
         logits = self.head(out)
-        probs = torch.nn.functional.softmax(logits, dim=2)
-
-        return Output(logits=logits, probs=probs)
+        return Output(logits=logits)
 
     def generate(self, prompt: Tensor, max_len: int) -> list[int]:
         out: list[int] = []
@@ -193,7 +193,7 @@ class TransformerLM(nn.Module, Model[ModelConfig, TokenBatch, Output]):
                 weight=None,
             )
             output = self.forward(batch)
-            tokens = torch.argmax(output.probs, dim=2)
+            tokens = torch.argmax(output.logits, dim=2)
             next = tokens[:, -1]
             out += next.tolist()
             prompt = torch.cat([prompt, next.unsqueeze(1)], dim=1)

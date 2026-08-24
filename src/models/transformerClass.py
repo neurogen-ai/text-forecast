@@ -22,8 +22,9 @@ class ModelConfig(BaseModel):
 
 
 class Output(NamedTuple):
+    """Logits only. Probabilities are derived by consumers (sigmoid)."""
+
     logits: Tensor
-    probs: Tensor
 
 
 class MultiHeadSelfAttn(nn.Module):
@@ -169,9 +170,10 @@ class TransformerClass(nn.Module, Model[ModelConfig, TokenBatch, Output]):
         masked_scores = raw_scores.masked_fill(mask == 0, float('-inf'))        
         scores = torch.nn.functional.softmax(masked_scores, dim=1)
 
+        # Logits only: sigmoid belongs to the loss/tracker, not the forward
+        # pass (sub-plan 1.4.3).
         logits = torch.sum(self.head(out) * scores, dim=1)
-        probs = torch.nn.functional.sigmoid(logits)
-        return Output(logits=logits, probs=probs)
+        return Output(logits=logits)
 
 
 if __name__ == "__main__":

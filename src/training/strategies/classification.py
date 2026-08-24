@@ -9,10 +9,13 @@ from .base import BaseStrategy, StrategyConfig
 
 
 class _ForwardOutput(Protocol):
-    """Minimal protocol for the model outputs this strategy consumes."""
+    """Minimal protocol for the model outputs this strategy consumes.
+
+    Logits only (sub-plan 1.4.3): probabilities are derived here via a
+    detached sigmoid when the tracker needs them.
+    """
 
     logits: Tensor
-    probs: Tensor
 
 
 T_Batch = TypeVar("T_Batch", bound=TokenBatch)
@@ -59,7 +62,7 @@ class ClassificationStrategy(BaseStrategy[TokenBatch]):
         loss_cpu_item = loss_cpu.item()
         self.tracker.log_metric("train_loss", loss_cpu_item, batch.x.shape[0])
         self.tracker.process_values(
-            (out.logits.detach().clone(), out.probs.detach().clone()),
+            (out.logits.detach().clone(), torch.sigmoid(out.logits.detach().clone())),
             ("train_logits", "train_probs"),
         )
 
@@ -94,7 +97,7 @@ class ClassificationStrategy(BaseStrategy[TokenBatch]):
         loss_cpu_item = loss_cpu.item()
         self.tracker.log_metric("val_loss", loss_cpu_item, batch.x.shape[0])
         self.tracker.process_values(
-            (out.probs.detach().clone(), out.logits.detach().clone()),
+            (torch.sigmoid(out.logits.detach().clone()), out.logits.detach().clone()),
             ("val_probs", "val_logits"),
         )
 
