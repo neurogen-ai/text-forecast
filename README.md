@@ -1,8 +1,10 @@
-# Citation Forecast
+# Text Forecast
 
-Welcome to citation-forecast, a CLI-based machine learning pipeline
-designed to forecast academic impact. I built this
-as a hands-on environment to experiment with NLP forecasting,
+Welcome to text-forecast, a CLI-based machine learning framework for
+forecasting outcomes from text corpora. It began life as a citation-impact
+predictor, but nothing in the pipeline is specific to academic papers:
+embed a text dataset, track it across time windows, train, and evaluate.
+I built this as a hands-on environment to experiment with NLP forecasting,
 while extending my practical knowledge of 
 Python, software engineering, and deep learning.
 
@@ -233,7 +235,7 @@ Data pre-processing CLI and custom PyTorch Datasets/Loaders forming a flexible E
 > - Runtime-agnostic `DescribeJob` / `EngineerJob` pipelines under `src/data/pipeline/`, moved out of the apps
 > - `Runtime` protocol extended with `get_source`, `run_describe`, `run_engineer`; local and Modal backends implement it
 > - `describe` and `engineer` dispatch through the runtime with `--runtime modal`; no app-side runtime branching
-> - Describe and engineer run as whole CPU jobs in the shared `citef-data` Modal app against the staged volume
+> - Describe and engineer run as whole CPU jobs in the shared `text-forecast-data` Modal app against the staged volume
 > - Engineer writes `metadata.json` recording the runtime that produced the dataset
 >
 > </details>
@@ -255,7 +257,7 @@ Data pre-processing CLI and custom PyTorch Datasets/Loaders forming a flexible E
 
 # 3. Project Structure
 ```text
-citation-forecast/
+text-forecast/
 ├── config/
 │   └── config.toml             # experiment name + [env] machine settings
 ├── plans/                      # implementation plans
@@ -302,14 +304,14 @@ citation-forecast/
 ├── utils/
 │   ├── registry.py             # @component marker decorator
 │   └── build_helper.py         # regenerates package __init__.py auto blocks
-└── citef                       # CLI entry point (pyproject.toml script)
+└── text-forecast                       # CLI entry point (pyproject.toml script)
 ```
 
 # 4. Quick start
-* Clone the repository and install the package. The `citef` command is created automatically from the `pyproject.toml` console-script entry point.
+* Clone the repository and install the package. The `text-forecast` command is created automatically from the `pyproject.toml` console-script entry point.
 ```bash
-git clone https://github.com/Felix-Noble/citation-forecast.git
-cd citation-forecast
+git clone https://github.com/Felix-Noble/text-forecast.git
+cd text-forecast
 pip install .
 ```
 
@@ -341,23 +343,23 @@ mlflow server
 
 * Start a training run on CPU using the experiment selected in `config.toml`:
 ```bash
-citef train -s smoke --no-gpu --subsample 512
+text-forecast train -s smoke --no-gpu --subsample 512
 ```
 
 * Or select an experiment explicitly on the CLI:
 ```bash
-citef --experiment graph_embed_class train -s smoke --no-gpu --subsample 512
+text-forecast --experiment graph_embed_class train -s smoke --no-gpu --subsample 512
 ```
 
 * Evaluate a checkpoint over sliding one-year windows (exports land on the
   eval run as `exports/<year>` MLflow artifacts):
 ```bash
-citef eval -id <run-id> -e <epoch> -s 1990-01-01 -i 1 --dry-run --no-gpu
+text-forecast eval -id <run-id> -e <epoch> -s 1990-01-01 -i 1 --dry-run --no-gpu
 ```
 
 * Resume any run from its MLflow checkpoint — including runs trained on Modal:
 ```bash
-citef train -s resume --load-id <run-id> --load-epoch <n> --no-gpu
+text-forecast train -s resume --load-id <run-id> --load-epoch <n> --no-gpu
 ```
 
 ### On Modal
@@ -368,9 +370,9 @@ train, and evaluate on Modal GPUs with one flag:
 ```bash
 pip install '.[modal]'
 
-citef preprocess --runtime modal          # stage data onto the Modal volume
-citef --experiment graph_embed_class train -s smoke --subsample 512 --runtime modal
-citef eval -id <modal-run-id> -e <epoch> -s 1990-01-01 -i 1 --dry-run --runtime modal
+text-forecast preprocess --runtime modal          # stage data onto the Modal volume
+text-forecast --experiment graph_embed_class train -s smoke --subsample 512 --runtime modal
+text-forecast eval -id <modal-run-id> -e <epoch> -s 1990-01-01 -i 1 --dry-run --runtime modal
 ```
 Train jobs are spawned fire-and-forget: the CLI prints the MLflow run id and
 Modal FunctionCall id and returns immediately. Block until done with

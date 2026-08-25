@@ -81,7 +81,7 @@ A missing staged dataset fails fast when the dataset is constructed:
 `assert_dataset_present` (in `data/datasets/presence.py`) resolves the source
 and raises `FileNotFoundError` naming the resolved path instead of letting an
 empty Modal volume surface as an opaque polars scan error deep in training.
-Produce the dataset with `citef preprocess --runtime modal` before training on
+Produce the dataset with `text-forecast preprocess --runtime modal` before training on
 Modal.
 
 ## Strategies (`strategies/`)

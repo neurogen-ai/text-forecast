@@ -1,4 +1,4 @@
-# Citation Forecast
+# Text Forecast
 
 A CLI-driven ML pipeline that forecasts academic impact from paper metadata.
 Built as a hands-on project for experimenting with NLP forecasting and deep

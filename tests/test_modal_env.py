@@ -28,7 +28,7 @@ def _env(tracking_uri: str = "http://127.0.0.1:5000") -> Env:
 
 def _cfg(**overrides) -> ModalRuntimeConfig:
     base = dict(
-        project="citef",
+        project="text-forecast",
         staged_volume="openalex-staged",
         checkpoint_volume="cf-checkpoints",
     )

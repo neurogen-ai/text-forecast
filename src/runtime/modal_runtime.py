@@ -84,7 +84,7 @@ preprocess_image = (
 )
 
 # Shared by the preprocess, describe, and engineer remote functions.
-MODAL_APP_NAME = "citef-data"
+MODAL_APP_NAME = "text-forecast-data"
 
 app = modal.App(MODAL_APP_NAME)
 volume = modal.Volume.from_name(VOLUME_LABEL, create_if_missing=True)

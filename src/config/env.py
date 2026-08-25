@@ -24,7 +24,7 @@ class ModalRuntimeConfig:
     inherit ``[env].tracking_uri``.
     """
 
-    project: str = "citef"
+    project: str = "text-forecast"
     gpu: str = "L4"
     train_gpu: str = "A10G"
     embedder_batch_size: int = 64

@@ -6,10 +6,10 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [project.scripts]
-citef = "main:app"
+text-forecast = "main:app"
 
 [project]
-name = 'citation-forecast'
+name = 'text-forecast'
 description = 'Forecast academic impact (citation count/percentile) with NLP'
 
 version = '2.0.0'

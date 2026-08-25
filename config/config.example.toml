@@ -17,7 +17,7 @@ volume = "openalex-staged"
 default = "local"
 
 [runtime.modal]
-project = "citef"
+project = "text-forecast"
 gpu = "T4"
 python_version = "3.12"
 embedder_batch_size = 64

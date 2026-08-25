@@ -17,7 +17,7 @@ def _env(modal: dict) -> Env:
 
 def test_defaults_when_section_missing() -> None:
     cfg = modal_runtime_config(_env_modal_absent())
-    assert cfg.project == "citef"
+    assert cfg.project == "text-forecast"
     assert cfg.gpu == "L4"
     assert cfg.train_gpu == "A10G"
     assert cfg.checkpoint_volume is None

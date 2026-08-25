@@ -18,7 +18,7 @@ def assert_dataset_present(source: DataSource, name: str) -> Path:
     if not path.exists():
         raise FileNotFoundError(
             f"Dataset {name!r} not found at resolved path {path} "
-            f"(backend={source.backend}). Produce it with 'citef preprocess' "
+            f"(backend={source.backend}). Produce it with 'text-forecast preprocess' "
             "or stage it onto the volume before running."
         )
     return path

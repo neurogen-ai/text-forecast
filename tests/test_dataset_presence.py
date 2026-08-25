@@ -38,4 +38,4 @@ def test_missing_dataset_raises_with_resolved_path(tmp_path: Path) -> None:
     message = str(exc_info.value)
     assert str(missing) in message
     assert "my-dataset" in message
-    assert "citef preprocess" in message
+    assert "text-forecast preprocess" in message
