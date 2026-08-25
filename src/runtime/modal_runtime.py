@@ -39,17 +39,14 @@ _GPU_TYPE = _MODAL_CONFIG.get("gpu", "L4")
 _PYTHON_VERSION = _MODAL_CONFIG.get("python_version", "3.12")
 _EMBEDDER_BATCH_SIZE = int(_MODAL_CONFIG.get("embedder_batch_size", 64))
 
-# Training/eval volume and GPU settings (2.0 step 6). ``checkpoint_volume`` is
-# required: without it there is no in-container scratch for checkpoints. The
-# modal extra is only imported when ``--runtime modal`` is requested, and the
-# step-5 migration note expects these keys to be present before remote
-# train/eval is used.
-_CHECKPOINT_VOLUME_LABEL = _MODAL_CONFIG.get("checkpoint_volume")
-if not _CHECKPOINT_VOLUME_LABEL:
-    raise ValueError(
-        "[runtime.modal].checkpoint_volume is required to use the Modal "
-        "runtime. Add it to config/config.toml under [runtime.modal]."
-    )
+# Training/eval volume and GPU settings (2.0 step 6).
+#
+# ``checkpoint_volume`` falls back to a default rather than raising here:
+# Modal resolves this class by module reference, so the *container* re-imports
+# this module with whatever config.toml was baked into the image. A missing
+# key must not crash container import. Client-side dispatch still fails fast
+# via ``modal_runtime_config(require_checkpoint_volume=True)``.
+_CHECKPOINT_VOLUME_LABEL = _MODAL_CONFIG.get("checkpoint_volume", "cf-checkpoints")
 _TRAIN_GPU = _MODAL_CONFIG.get("train_gpu", "A10G")
 _TRAIN_TIMEOUT = int(_MODAL_CONFIG.get("timeout", 86400))
 STAGED_VOLUME_LABEL = _MODAL_CONFIG.get("staged_volume", "openalex-staged")
@@ -59,6 +56,12 @@ STAGED_VOLUME_LABEL = _MODAL_CONFIG.get("staged_volume", "openalex-staged")
 # clears ``compile_mode`` on the job whenever this is enabled (plan 2.0
 # §10.1 caveat).
 _SNAPSHOT_ENABLED = True
+
+# Training shares the preprocessing image: pyproject deps + flat src-layout.
+# config/ is baked in too, deviating from plan 2.0 §10.3, because this module
+# calls load_env() at import time (client-side for the decorators below, and
+# again inside the container when Modal re-imports it by module reference).
+# Jobs still carry their own Env; the baked config only feeds these constants.
 
 logger.debug(
     "Modal runtime config: gpu=%r python_version=%r embedder_batch_size=%r "
@@ -155,7 +158,7 @@ class ModalEmbeddingGPU:
 
 
 
-@app.cls(
+_train_cls_kwargs: dict[str, Any] = dict(
     gpu=_TRAIN_GPU,
     image=preprocess_image,
     volumes={
@@ -164,11 +167,13 @@ class ModalEmbeddingGPU:
     },
     timeout=_TRAIN_TIMEOUT,
     scaledown_window=300,
-    enable_memory_snapshot=_SNAPSHOT_ENABLED,
-    experimental_options=(
-        {"enable_gpu_snapshot": True} if _SNAPSHOT_ENABLED else None
-    ),
 )
+if _SNAPSHOT_ENABLED:
+    _train_cls_kwargs["enable_memory_snapshot"] = True
+    _train_cls_kwargs["experimental_options"] = {"enable_gpu_snapshot": True}
+
+
+@app.cls(**_train_cls_kwargs)
 class ModalTrainingGPU:
     """Remote training/eval GPU container (2.0 step 6).
 
