@@ -20,9 +20,26 @@ Adding a backend means implementing both classes and registering them.
 
 ## Preprocess pipeline (`data/preprocess/`)
 
-`PreprocessJob` is a frozen, serialisable description of a job. It carries no
-runtime state; `Runtime.run_preprocess` decides whether to run it locally or
-dispatch it to a remote container.
+The pipeline is described by an ordered tuple of step specs (plan 2.1):
+
+- `CleanStep` - one text column, with flags for lowercasing, quality-marker
+  nulling, language policy, length trim, terminal-period requirement
+  (`steps.py`)
+- `DropNaStep` - drop rows null in any of the given columns
+- `TokeniseStep` - tokeniser key + columns
+- `EmbedStep` - embedder key + constructor kwargs + columns
+
+Each spec is a frozen kw-only dataclass with a `tag` literal for
+serialisation (`step_to_dict` / `step_from_dict` dispatch on the tag). The
+CLI parses ordered `--op` flags into this tuple (`apps/preprocess_ops.py`);
+see docs/apps.md for the flag surface.
+
+`PreprocessJob` is a frozen, serialisable description of a job: global filter
+and partition parameters plus the `steps` tuple. It carries no runtime state;
+`Runtime.run_preprocess` decides whether to run it locally or dispatch it to a
+remote container (the Modal runtime pickles whole jobs via `fn.remote(job)`, so
+step specs need only be picklable, but dict serialisation is kept for metadata
+and tests).
 
 `run_preprocess_pipeline` scans all parquet files under the origin source,
 applies global filters up front:
@@ -33,36 +50,65 @@ applies global filters up front:
 
 It then assigns rows to partitions (`--partitions` or `--rows-per-part`;
 defaults to one partition per input file) and processes each partition in
-sequence, sinking to `part_<i>.parquet` with zstd compression. Per partition,
-in order:
+sequence, applying license scrubbing first (columns in
+`replace_non_permissive_cols` are nulled where `is_license_safe` is false),
+then each pipeline step in order via its registered handler (`HANDLERS` in
+`pipeline.py`), sinking to `part_<i>.parquet` with zstd compression. Step
+handlers:
 
-1. **License scrubbing** - columns in `replace_non_permissive_cols` are nulled
-   where `is_license_safe` is false.
-2. **Cleaning** - `clean.py` per column/level/min_len triple.
-3. **Null drops** - per `drop_na_cols`.
-4. **Embedding** - if an embedder key is set, embed columns are wrapped in BOS/EOS
-   tokens, concatenated, and encoded via `map_batches`. Output column:
-   `<cols>_embedding` as a fixed-width Float32 array.
-5. **Tokenising** - `<col>_tokens` as Int64 lists, nulls become empty lists.
+- **CleanStep** (`clean.py`) - see below.
+- **DropNaStep** - `lf.drop_nulls(subset=cols)`.
+- **EmbedStep** - embed columns are wrapped in BOS/EOS tokens, concatenated,
+  and encoded via `map_batches`. Output column: `<cols>_embedding` as a
+  fixed-width Float32 array.
+- **TokeniseStep** - `<col>_tokens` as Int64 lists, nulls become empty lists.
 
-A `metadata.json` of all CLI params is written alongside the parts. `--dry-run`
-slices 500 rows and prints instead of writing.
+A `metadata.json` of all job params (including the serialised steps) is written
+alongside the parts. `--dry-run` slices 500 rows and prints instead of writing.
 
-### Cleaning levels (`clean.py`)
+### CleanStep semantics (`clean.py`)
 
-Cleaning is cumulative; level N includes everything below:
+Applied to a single column, in order: lowercase (optional) → quality markers →
+language handling → length trim → terminal period. Rows whose text contains any
+`EXCLUDE_QUALITY` substring (boilerplate like "log in", "uses cookies", "an
+abstract is not available") are nulled unless `drop_quality=False`. Rows
+containing a non-English marker from `EXCLUDE_LANG` (CJK function words,
+accented characters) follow `lang_policy`: `mark` sets `language` to
+`"unknown"` without dropping (default), `drop` removes them, `off` ignores
+them.
 
-| Level | Effect |
-|-------|--------|
-| 1 | Null out rows whose text contains any `exclude_quality` marker (boilerplate like "log in", "uses cookies", "an abstract is not available") |
-| 2 | Lowercase the column |
-| 3 | Null out rows below `mean - 3*std` length (floor at `min_len`) |
-| 4 | Also null rows above `mean + 3*std` |
-| 5 | Keep only rows ending in a period |
+Length trim (`LengthTrim`) semantics were corrected in 2.1:
 
-Rows containing any non-English marker from `exclude_lang` (CJK function words,
-accented characters) have their `language` set to `"unknown"` rather than being
-dropped.
+- `min_chars` is a hard minimum: rows with `len_chars < min_chars` are dropped.
+- When `max_sigma` is set, mean/std of character length are computed once per
+  column per partition (one streaming collect) and rows with
+  `len > mean + max_sigma * std` are dropped.
+- There is deliberately **no lower statistical bound**: short rows are governed
+  solely by `min_chars`.
+
+#### Old level → equivalent CLI flags
+
+Pre-2.1 cleaning used cumulative integer levels (`--clean-level N`). The new
+surface composes the same effects from explicit flags. Note that old level 3's
+lower bound was `max(mean - 3σ, min_len)` applied through two comparisons that
+had their signs inverted, so in practice the old code dropped the *wrong* rows
+(it nulled long in-band rows on one side and kept extreme outliers on the
+other). The mapping below describes intended old behaviour; actual old
+behaviour differed wherever the sign bug bit. Level 3+ behaviour intentionally
+changes beyond the sign fix: short-row handling is now purely `min_chars`, with
+no statistical floor.
+
+| Old level | Equivalent flags |
+|-----------|------------------|
+| 1 | `--op "clean:<col>"` alone (quality filter + language marking) |
+| 2 | `--op "clean:<col>" --lowercase` |
+| 3 | `--op "clean:<col>" --trim-min-chars <min_len> --trim-max-sigma 3` (intended behaviour; see sign-bug caveat above) |
+| 4 | same as 3 (`max_sigma 3` gives both sides' intent; there is no separate lower σ cut anymore) |
+| 5 | `--op "clean:<col>" --require-terminal-period` plus the desired trim flags |
+
+Tokenise/embed/dropna steps map directly: `--op "tokenise:<cols>"
+--op-tokeniser whitespace`, `--op "embed:<cols>" --op-embedder modernbert-base`,
+`--op "dropna:<cols>"`.
 
 ### Embedders (`embed.py`, `embed_huggingface.py`, `embed_modal.py`)
 

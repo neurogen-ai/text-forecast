@@ -27,19 +27,51 @@ dataset identity lives in the experiment file and location in the environment.
 
 Runs the cleaning/tokenising/embedding pipeline. Takes an origin dataset as an
 argument (dataset name or path under the source base dir) and writes
-`<origin>-preprocessed` unless `--name` is given.
+`<origin>-preprocessed` unless `--name`/`-n` is given.
 
-Steps are opt-in per column:
+The pipeline is a list of ordered ops, each given as `"<kind>:<colspec>"` where
+colspec is a comma-separated column list. Kinds: `clean`, `dropna`, `tokenise`,
+`embed`. Steps run in the order the flags appear on the command line.
+Per-op params attach to clean ops in order (the Nth occurrence of each param
+flag configures the Nth clean op); `--op-tokeniser` and `--op-embedder`
+(`-config`) attach to the most recent tokenise/embed op.
 
-- `--clean-col` + `--clean-level` + `--clean-min-len` - text cleaning; the three
-  lists must be the same length
-- `--tokeniser` + `--tokenise-col`
-- `--embedder` + `--embed-col`, with `--embedder-config` (JSON), batch size, device
+Clean params: `--lowercase`, `--trim-min-chars <int>`, `--trim-max-sigma
+<float>` (drop rows longer than mean + N*sigma lengths),
+`--require-terminal-period`, `--lang-policy mark|drop|off` (default `mark`),
+`--no-drop-quality`. See docs/data-pipeline.md for exact semantics and the
+old-level → flags mapping.
 
-Also filters rows by date, field id, language, document type, and license
-(non-permissive licenses are dropped unless overridden). Output is partitioned
-via `--partitions` or `--rows-per-part` with zstd compression. Supports
-`--runtime modal` for GPU embedding; `--dry-run` slices 500 rows.
+Examples (all verified against `text-forecast preprocess --help`):
+
+```bash
+# Quality/language clean only (equivalent to old level 1)
+text-forecast preprocess my-dataset --op "clean:text"
+
+# Clean + lowercase + trim short rows, drop rows null in title (old level 2+3 intent)
+text-forecast preprocess my-dataset \
+    --op "clean:title" --lowercase --trim-min-chars 20 --trim-max-sigma 3 \
+    --op "dropna:title"
+
+# Clean two columns with per-op params: first clean lowercases, second doesn't
+text-forecast preprocess my-dataset \
+    --op "clean:title" --lowercase --op "clean:abstract"
+
+# Tokenise then embed on GPU via Modal
+text-forecast preprocess my-dataset --runtime modal \
+    --op "clean:text" --trim-min-chars 20 \
+    --op "tokenise:text" --op-tokeniser whitespace \
+    --op "embed:text,abstract" --op-embedder modernbert-base \
+    --op-embedder-config '{"device": "cpu"}'
+```
+
+Also filters rows by date (`--start-date`/`--end-date`), field id, language,
+document type, and license (`--filt-license` on by default;
+`--replace-non-permissive-col` names columns to null instead of dropping).
+Output is partitioned via
+`--partitions`/`-p` or `--rows-per-part`/`-rp` with zstd compression
+(`--compression-level`). Supports `--runtime modal` for GPU embedding;
+`--dry-run` slices 500 rows.
 
 ## describe
 
