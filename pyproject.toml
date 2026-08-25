@@ -10,7 +10,7 @@ text-forecast = "main:app"
 
 [project]
 name = 'text-forecast'
-description = 'Forecast academic impact (citation count/percentile) with NLP'
+description = 'Forecast outcomes from text corpora over time, with NLP'
 
 version = '2.0.0'
 requires-python = '>=3.12'
