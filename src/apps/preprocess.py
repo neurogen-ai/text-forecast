@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 from datetime import datetime
 from logging import getLogger
@@ -15,15 +14,9 @@ from apps.source_args import (
     source_opt_arg,
     source_volume_arg,
 )
-from config.env import Env, load_env
+from config.env import load_env
 from data.preprocess.pipeline import PreprocessJob
-from data.preprocess.steps import (
-    CleanStep,
-    DropNaStep,
-    EmbedStep,
-    LengthTrim,
-    TokeniseStep,
-)
+from apps.preprocess_ops import _parse_ops
 from data.sources import LocalSourceBackend, SourceBackend
 from data.sources.base import DataSource
 from runtime import build_runtime
@@ -36,11 +29,6 @@ os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
-
-def _parse_embedder_config(value: str) -> dict[str, object]:
-    if not value:
-        return {}
-    return json.loads(value)
 
 
 def _resolve_origin(
@@ -64,7 +52,7 @@ def _resolve_origin(
     return origin_source, base_name
 
 
-@app.callback(invoke_without_command=True)
+@app.command()
 def main(
     ctx: typer.Context,
     origin: str = typer.Argument(
@@ -76,62 +64,59 @@ def main(
         "-n",
         help='Name of exported dataset; defaults to "<origin>-preprocessed"',
     ),
-    clean_cols: list[str] = typer.Option(
+    ops: list[str] = typer.Option(
         [],
-        "--clean-col",
-        "-c",
-        help="Data columns to clean, must be str; pass multiple flags for multiple cols",
+        "--op",
+        help=(
+            'Pipeline op in "<kind>:<colspec>" form, e.g. --op "clean:title" '
+            'or --op "dropna:title,abstract". Repeatable; steps run in the '
+            "order given."
+        ),
     ),
-    clean_levels: list[int] = typer.Option(
+    lowercase: list[bool] = typer.Option(
         [],
-        "--clean-level",
-        "-cl",
-        help="Level to clean each column at; must be in the same order as --clean-col",
+        "--lowercase",
+        help="Clean param (per clean op): lowercase text before cleaning.",
     ),
-    clean_min_len: list[int] = typer.Option(
+    trim_min_chars: list[int] = typer.Option(
         [],
-        "--clean-min-len",
-        "-cml",
-        help="Minimum length for the column being cleaned; same order as --clean-col",
+        "--trim-min-chars",
+        help='Clean param: minimum chars to keep, e.g. --trim-min-chars 20.',
     ),
-    tokeniser: str = typer.Option(
-        "",
-        "--tokeniser",
-        "-t",
-        help="Tokenizer to use when tokenise step is requested",
-    ),
-    tokenise_cols: list[str] = typer.Option(
+    trim_max_sigma: list[float] = typer.Option(
         [],
-        "--tokenise-col",
-        "-tc",
-        help="Data columns to tokenise; pass multiple flags for multiple cols",
+        "--trim-max-sigma",
+        help="Clean param: drop texts longer than mean + N*sigma lengths.",
     ),
-    embedder: str = typer.Option(
-        "",
-        "--embedder",
-        "-em",
-        help="Registered embedder key; inactive if empty",
-    ),
-    embedder_config: str = typer.Option(
-        "",
-        "--embedder-config",
-        help="JSON object passed to the embedder constructor",
-    ),
-    embedder_batch_size: int = typer.Option(
-        32,
-        "--embedder-batch-size",
-        help="Batch size for the embedder",
-    ),
-    embedder_device: str = typer.Option(
-        "",
-        "--embedder-device",
-        help="Device override for the embedder (e.g. cpu, cuda)",
-    ),
-    embed_cols: list[str] = typer.Option(
+    require_terminal_period: list[bool] = typer.Option(
         [],
-        "--embed-cols",
-        "-ec",
-        help="Data columns to embed; pass multiple flags for multiple cols",
+        "--require-terminal-period",
+        help="Clean param: require a terminal period after trimming.",
+    ),
+    lang_policy: list[str] = typer.Option(
+        [],
+        "--lang-policy",
+        help='Clean param: language handling; one of mark|drop|off.',
+    ),
+    no_drop_quality: list[bool] = typer.Option(
+        [],
+        "--no-drop-quality",
+        help="Clean param: keep low-quality rows instead of dropping them.",
+    ),
+    tokeniser: str | None = typer.Option(
+        None,
+        "--op-tokeniser",
+        help='Tokenise param: tokeniser key, e.g. --op-tokeniser whitespace.',
+    ),
+    embedder_key: str | None = typer.Option(
+        None,
+        "--op-embedder",
+        help='Embed param: embedder key, e.g. --op-embedder modernbert-base.',
+    ),
+    embedder_kwargs_json: str | None = typer.Option(
+        None,
+        "--op-embedder-config",
+        help='Embed param: JSON object for the embedder constructor, e.g. \'{"device": "cpu"}\'.',
     ),
     n_partitions: int = typer.Option(
         0,
@@ -167,11 +152,6 @@ def main(
         "--field-id",
         "-fid",
         help="Field id/s to include",
-    ),
-    drop_na_cols: list[str] = typer.Option(
-        [],
-        "--drop-na-col",
-        help="Cols to drop nulls in",
     ),
     languages: list[str] = typer.Option(
         [],
@@ -228,18 +208,23 @@ def main(
         help="Override artifact storage location",
     ),
 ) -> None:
-    assert (tokeniser and tokenise_cols) or (not tokeniser and not tokenise_cols), (
-        "Provide columns to be tokenised"
-    )
-    assert (embedder and embed_cols) or (not embedder and not embed_cols), (
-        "Provide columns to be embedded"
-    )
-    assert len(clean_cols) == len(clean_levels) == len(clean_min_len), (
-        "Clean cols, levels, and min-lens must be given in same quantity"
-    )
-    assert not (rows_per_part and n_partitions), (
-        "Define partition split with one or the other"
-    )
+    """Run the preprocessing pipeline on a dataset.
+
+    Worked example:
+
+        text-forecast preprocess <origin> --op "clean:title" --lowercase \
+            --trim-min-chars 20 --op "dropna:title" --op "embed:text,abstract" \
+            --op-embedder modernbert-base
+
+    Op specs are "<kind>:<colspec>" where colspec is a comma-separated list
+    of columns. Per-op params apply to clean ops in order; --op-tokeniser and
+    --op-embedder(-config) attach to the most recent tokenise/embed op.
+    """
+    if bool(rows_per_part) and bool(n_partitions):
+        raise typer.BadParameter(
+            "Define partition split with one or the other "
+            "(--partitions or --rows-per-part), not both"
+        )
 
     env = load_env(
         overrides={
@@ -269,11 +254,6 @@ def main(
                 "--runtime modal requires a [runtime.modal] section in "
                 "config/config.toml. See config/config.example.toml."
             )
-        if embedder_device:
-            logger.warning(
-                "--embedder-device is ignored when using --runtime modal; "
-                "the Modal GPU class always uses cuda."
-            )
 
     runtime = build_runtime(runtime_name, env)
 
@@ -289,42 +269,18 @@ def main(
     dest_name = name if name else f"{base_name}-preprocessed"
     destination = source_backend_obj.get_source(dest_name)
 
-    embedder_kwargs = _parse_embedder_config(embedder_config)
-    if embedder_device:
-        embedder_kwargs["device"] = embedder_device
-    if embedder_batch_size:
-        embedder_kwargs["batch_size"] = embedder_batch_size
-
-    # Interim bridge (plan 2.1 T2): old CLI flags mapped onto declarative
-    # steps. T4b rebuilds this CLI properly.
-    steps: list[CleanStep | TokeniseStep | EmbedStep | DropNaStep] = []
-    for col, level, min_len in zip(clean_cols, clean_levels, clean_min_len):
-        steps.append(
-            CleanStep(
-                col=col,
-                lowercase=level > 1,
-                trim=(
-                    LengthTrim(min_chars=min_len, max_sigma=3.0)
-                    if level >= 3
-                    else None
-                ),
-                require_terminal_period=level > 4,
-            )
-        )
-    if tokeniser and tokenise_cols:
-        steps.append(
-            TokeniseStep(tokeniser=tokeniser, cols=tuple(tokenise_cols))
-        )
-    if embedder and embed_cols:
-        steps.append(
-            EmbedStep(
-                embedder_key=embedder,
-                embedder_kwargs=dict(embedder_kwargs),
-                cols=tuple(embed_cols),
-            )
-        )
-    if drop_na_cols:
-        steps.append(DropNaStep(cols=tuple(drop_na_cols)))
+    steps = _parse_ops(
+        ops,
+        lowercase=lowercase,
+        trim_min_chars=trim_min_chars,
+        trim_max_sigma=trim_max_sigma,
+        require_terminal_period=require_terminal_period,
+        lang_policy=lang_policy,
+        drop_quality=[not v for v in no_drop_quality],
+        tokeniser=tokeniser,
+        embedder_key=embedder_key,
+        embedder_kwargs_json=embedder_kwargs_json,
+    )
 
     job = PreprocessJob(
         origin=origin_source,

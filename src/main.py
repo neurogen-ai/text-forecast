@@ -2,13 +2,17 @@
 import tomllib
 import typer
 
-from apps import describe, engineer, eval, preprocess, train
+from apps import describe, engineer, eval, train
+from apps.preprocess import main as preprocess_main
 from config.loader import available_experiments, resolve_experiment_name
 from utils.get_root_dir import get_root_dir
 
 app = typer.Typer(pretty_exceptions_enable=False)
-app.add_typer(preprocess, name="preprocess")
 app.add_typer(describe, name="describe")
+# Register the preprocess command directly: a single-command sub-Typer would
+# otherwise become a click Group that swallows the positional ORIGIN argument
+# (pre-existing bug with the callback-only pattern).
+app.command(name="preprocess")(preprocess_main)
 app.add_typer(engineer, name="engineer")
 app.add_typer(eval, name="eval")
 # app.add_typer(chat, name="chat")

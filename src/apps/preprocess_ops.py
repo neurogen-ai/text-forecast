@@ -19,11 +19,11 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from typing import Any
+from typing import Any, cast
 
 import typer
 
-from src.data.preprocess.steps import (
+from data.preprocess.steps import (
     CleanStep,
     DropNaStep,
     EmbedStep,
@@ -46,8 +46,8 @@ def _parse_ops(
     ops: list[str],
     *,
     lowercase: list[bool] | None = None,
-    trim_min_chars: list[int | None] | None = None,
-    trim_max_sigma: list[float | None] | None = None,
+    trim_min_chars: list[int] | None = None,
+    trim_max_sigma: list[float] | None = None,
     require_terminal_period: list[bool] | None = None,
     lang_policy: list[str] | None = None,
     drop_quality: list[bool] | None = None,
@@ -191,7 +191,7 @@ def _parse_ops(
                 raise _bad(f"invalid JSON in embedder kwargs: {exc}") from None
             if not isinstance(parsed, dict):
                 raise _bad("embedder kwargs must be a JSON object")
-            kwargs_out = parsed
+            kwargs_out = cast(dict[str, Any], parsed)
         if last_embed is not None:
             idx = steps.index(last_embed)
             steps[idx] = dataclasses.replace(
