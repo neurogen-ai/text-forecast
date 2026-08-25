@@ -91,6 +91,19 @@ known inside the pipeline. The experiment module file and model source file are
 logged as artifacts, along with dataset sizes and model class. Checkpoints go
 through the experiment's configured processor (local, MLflow store, or S3).
 
+`--runtime` to select the execution backend (overrides `[runtime].default`).
+
+### Modal config
+
+`[runtime.modal]` in `config/config.toml` holds every Modal setting. The data
+apps use `project`, `gpu`, `python_version`, and `embedder_batch_size`. Train
+and eval additionally use `train_gpu`, `timeout`, `raw_volume`,
+`staged_volume`, `checkpoint_volume`, and the optional `tracking_uri` override
+(empty means inherit `[env].tracking_uri`).
+`config.env.modal_runtime_config(env)` is the typed accessor; pass
+`require_checkpoint_volume=True` on train/eval dispatch paths so a missing
+`checkpoint_volume` fails fast with the key to set.
+
 Useful flags: `--parent-id` to nest MLflow runs, `--start-epoch` to override the
 resume epoch, `--progress/--no-progress` for the Rich bars, `--gpu/--no-gpu`,
 `--runtime` to select the execution backend (overrides `[runtime].default`).

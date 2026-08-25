@@ -7,11 +7,33 @@ CLI overrides.  No module-level singletons or PEP 562 shims remain.
 from __future__ import annotations
 
 import tomllib
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from utils.get_root_dir import get_root_dir
+
+
+@dataclass(frozen=True, kw_only=True)
+class ModalRuntimeConfig:
+    """Typed view of ``[runtime.modal]`` from ``config/config.toml``.
+
+    Defaults mirror the historical module-level fallbacks in
+    ``runtime.modal_runtime``. ``tracking_uri`` is ``None`` when unset, meaning
+    inherit ``[env].tracking_uri``.
+    """
+
+    project: str = "citef"
+    gpu: str = "L4"
+    train_gpu: str = "A10G"
+    embedder_batch_size: int = 64
+    python_version: str = "3.12"
+    raw_volume: str = "openalex-raw"
+    staged_volume: str = "openalex-staged"
+    checkpoint_volume: str | None = None
+    timeout: int = 86400
+    tracking_uri: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -72,3 +94,34 @@ def load_env(
         runtime=data.get("runtime", {}),
         source=source,
     )
+
+
+def modal_runtime_config(
+    env: Env, *, require_checkpoint_volume: bool = False
+) -> ModalRuntimeConfig:
+    """Build a typed :class:`ModalRuntimeConfig` from ``env.runtime["modal"]``.
+
+    Set ``require_checkpoint_volume`` for train/eval dispatch paths: without a
+    checkpoint volume there is nowhere to stage checkpoint scratch inside the
+    container, so the call fails fast with the key to set.
+    """
+
+    raw = env.runtime.get("modal", {})
+    if not isinstance(raw, dict):
+        raise ValueError("[runtime.modal] must be a table in config.toml")
+
+    known: dict[str, Any] = {}
+    for f in dataclasses.fields(ModalRuntimeConfig):
+        if f.name in raw:
+            known[f.name] = raw[f.name]
+    unknown = sorted(set(raw) - {f.name for f in dataclasses.fields(ModalRuntimeConfig)})
+    if unknown:
+        raise ValueError(f"Unknown keys in [runtime.modal]: {unknown}")
+
+    cfg = ModalRuntimeConfig(**known)
+    if require_checkpoint_volume and not cfg.checkpoint_volume:
+        raise ValueError(
+            "[runtime.modal].checkpoint_volume is required for remote "
+            "train/eval. Add it to config.toml under [runtime.modal]."
+        )
+    return cfg
