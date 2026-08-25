@@ -8,18 +8,21 @@ Python, software engineering, and deep learning.
 
 The core training loop and data pre-processing is driven entirely by
 CLI and integrates directly with MLflow to track experiments and compare
-iterations efficiently. v1.0 moves to dependency-injected experiment files:
+iterations iterations efficiently. Since v2.0 it is a hybrid local/cloud system:
 each experiment is a single self-contained Python module that instantiates its
 own models, datasets, samplers, plain torch DataLoaders, strategy, tracker, and
-checkpoint processor, with all inputs strictly validated by Pydantic. 
+checkpoint processor, and every app runs either locally or on Modal GPUs with
+one `--runtime` flag.
 
 # 1. Tech Stack & Key Features
 ## 1.1 Key Features
 * **Modular Experiment Architecture:**
 Self-contained experiment modules under `src/config/experiments/` declare the full object graph for a run; the CLI selects the experiment and delegates the epoch/batch loop to a generic Engine.
 
-* **Production-Ready Inference:** 
-Integrated with Modal for serverless GPU inference and MLflow for experiment tracking.
+* **Local or cloud execution:**
+One `Runtime` interface dispatches every job. Train and evaluate locally, or
+spawn headless GPU jobs on Modal (`--runtime modal`) against volume-backed
+data, with checkpoints and metrics flowing into the same MLflow runs either way.
 
 * **Data Pipeline:** 
 Data pre-processing CLI and custom PyTorch Datasets/Loaders forming a flexible ETL pipeline
@@ -235,6 +238,19 @@ Data pre-processing CLI and custom PyTorch Datasets/Loaders forming a flexible E
 >
 > </details>
 
+> ## v2.0
+> <details>
+> <summary><b>v2.0.0 Training and evaluation on Modal</b></summary>
+>
+> - Experiments build from `(runtime, env)` alone; machine locations live in `[source]` config, never CLI flags
+> - Venue-independent `TrainJob` / `EvalJob` pipelines under `src/training/pipeline/`; apps are thin parse-and-delegate layers
+> - MLflow runs created client-side by the runtime wrapper and resumed in-place by `run_id`, so run naming/parenting works the same on both venues
+> - `ModalTrainingGPU` spawns fire-and-forget train/eval jobs with `.spawn()`; checkpoints land as MLflow artifacts, so a Modal-trained run resumes locally and vice versa
+> - Eval prediction exports are `exports/<year>` MLflow artifacts (downloadable from anywhere), not local directories
+> - Engine and trackers run headless (`progress=None`) inside containers
+>
+> </details>
+
 </details>
 
 # 3. Project Structure
@@ -305,9 +321,16 @@ experiment = "graph_embed_class"
 
 [env]
 tracking_uri = "http://127.0.0.1:5000"
-raw_loc      = "/path/to/raw/OpenAlex-parquet/"
-staged_loc   = "/path/to/staged/data/"
 artifact_loc = "/path/to/experiment-tracking/artifacts"
+
+[source]
+default = "local"
+
+[source.local]
+base_dir = "/path/to/staged/data"
+
+[runtime]
+default = "local"
 ```
 
 * Run the MLflow tracking server
@@ -325,3 +348,32 @@ citef train -s smoke --no-gpu --subsample 512
 ```bash
 citef --experiment graph_embed_class train -s smoke --no-gpu --subsample 512
 ```
+
+* Evaluate a checkpoint over sliding one-year windows (exports land on the
+  eval run as `exports/<year>` MLflow artifacts):
+```bash
+citef eval -id <run-id> -e <epoch> -s 1990-01-01 -i 1 --dry-run --no-gpu
+```
+
+* Resume any run from its MLflow checkpoint — including runs trained on Modal:
+```bash
+citef train -s resume --load-id <run-id> --load-epoch <n> --no-gpu
+```
+
+### On Modal
+
+Install the optional extra and fill in the `[runtime.modal]` section of
+`config/config.toml` (project, volumes, GPUs, timeout). Then preprocess,
+train, and evaluate on Modal GPUs with one flag:
+```bash
+pip install '.[modal]'
+
+citef preprocess --runtime modal          # stage data onto the Modal volume
+citef --experiment graph_embed_class train -s smoke --subsample 512 --runtime modal
+citef eval -id <modal-run-id> -e <epoch> -s 1990-01-01 -i 1 --dry-run --runtime modal
+```
+Train jobs are spawned fire-and-forget: the CLI prints the MLflow run id and
+Modal FunctionCall id and returns immediately. Block until done with
+`modal FunctionCall.from_id(<id>).get()`, or watch the run in the MLflow UI.
+Checkpoints stream into the same run either way, so cross-runtime resume needs
+no extra steps.
