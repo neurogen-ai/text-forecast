@@ -28,7 +28,7 @@ class _HasBatchSize(Protocol):
 
 
 T_Batch = TypeVar("T_Batch", bound=_HasBatchSize)
-ProgressBars = tuple[Progress, Progress, Progress]
+ProgressBars = tuple[Progress, Progress, Progress] | None
 
 
 class Engine[T_Batch: _HasBatchSize]:
@@ -39,23 +39,45 @@ class Engine[T_Batch: _HasBatchSize]:
         *,
         experiment: Experiment[T_Batch],
         runtime: RunContext,
-        progress: ProgressBars,
+        progress: ProgressBars = None,
     ) -> None:
         self.experiment = experiment
         self.runtime = runtime
         self._progress = progress
 
-        self._epoch_task = progress[0].add_task(
-            "Epochs", total=experiment.epochs
-        )
-        self._train_task = progress[1].add_task(
-            "Train Examples",
-            total=self._total_examples(experiment.train_loader),
-        )
-        self._val_task = progress[2].add_task(
-            "Eval Examples",
-            total=self._total_examples(experiment.val_loader),
-        )
+        if progress is not None:
+            self._epoch_task = progress[0].add_task(
+                "Epochs", total=experiment.epochs
+            )
+            self._train_task = progress[1].add_task(
+                "Train Examples",
+                total=self._total_examples(experiment.train_loader),
+            )
+            self._val_task = progress[2].add_task(
+                "Eval Examples",
+                total=self._total_examples(experiment.val_loader),
+            )
+
+    def _advance(self, bar_idx: int, *, advance: int) -> None:
+        """Advance one progress task when bars are active (headless-safe)."""
+        if self._progress is None:
+            return
+        task = (self._train_task, self._val_task)[bar_idx]
+        self._progress[bar_idx + 1].advance(task, advance=advance)
+
+    def _reset(self, bar_idx: int, *, description: str, total: int) -> None:
+        """Reset one progress task when bars are active (headless-safe)."""
+        if self._progress is None:
+            return
+        task = (self._train_task, self._val_task)[bar_idx]
+        bar = self._progress[bar_idx + 1]
+        bar.reset(task, description=description, total=total)
+
+    def _advance_epoch(self) -> None:
+        """Advance the epoch task when bars are active (headless-safe)."""
+        if self._progress is None:
+            return
+        self._progress[0].advance(self._epoch_task, advance=1)
 
     @staticmethod
     def _total_examples(loader: DataLoader[T_Batch]) -> int:
@@ -73,17 +95,15 @@ class Engine[T_Batch: _HasBatchSize]:
         strategy = self.experiment.strategy
         strategy.start_epoch(epoch=epoch)
 
-        self._progress[1].reset(
-            self._train_task,
+        self._reset(
+            0,
             description="Train Examples",
             total=self._total_examples(self.experiment.train_loader),
         )
 
         for batch in self.experiment.train_loader:
             _ = strategy.training_step(batch)
-            self._progress[1].advance(
-                self._train_task, advance=self._batch_size(batch)
-            )
+            self._advance(0, advance=self._batch_size(batch))
 
     def eval_epoch(
         self,
@@ -95,17 +115,15 @@ class Engine[T_Batch: _HasBatchSize]:
         loader = loader or self.experiment.val_loader
         strategy = self.experiment.strategy
 
-        self._progress[2].reset(
-            self._val_task,
+        self._reset(
+            1,
             description="Eval Examples",
             total=self._total_examples(loader),
         )
 
         for batch in loader:
             _ = strategy.validation_step(batch)
-            self._progress[2].advance(
-                self._val_task, advance=self._batch_size(batch)
-            )
+            self._advance(1, advance=self._batch_size(batch))
 
         self.experiment.tracker.calc_metrics(prefix="val", step=epoch)
 
@@ -138,11 +156,14 @@ class Engine[T_Batch: _HasBatchSize]:
 
             self.experiment.tracker.calc_metrics(prefix="train", step=epoch)
             metrics = self.experiment.tracker.report(
-                progress_bar=self._progress[0], epoch=epoch
+                progress_bar=(
+                    self._progress[0] if self._progress is not None else None
+                ),
+                epoch=epoch,
             )
             if metrics:
                 mlflow.log_metrics(
                     metrics, step=epoch, synchronous=False
                 )
             self.experiment.tracker.clear()
-            self._progress[0].advance(self._epoch_task, advance=1)
+            self._advance_epoch()

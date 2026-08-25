@@ -249,23 +249,26 @@ class MetricTracker:
 
     def report(
         self,
-        progress_bar: object,
+        progress_bar: object | None = None,
         *,
         epoch: int | None = None,
     ) -> dict[str, float]:
-        "Generates rich.Table, renders as string via capture(), returns"
+        "Aggregate metrics; render a rich.Table when a progress_bar is given."
         aggregate_metrics = self._aggregate_metrics()
 
-        cols: list[str] = ["cyan", "green"]
-        table: Table = Table(show_header=True, pad_edge=True, padding=(0, 1))
-        table.add_column("Epoch", style="cyan")
-        for i, (k) in enumerate(aggregate_metrics.keys()):
-            table.add_column(k, style=cols[i % len(cols)])
+        if progress_bar is not None:
+            cols: list[str] = ["cyan", "green"]
+            table: Table = Table(
+                show_header=True, pad_edge=True, padding=(0, 1)
+            )
+            table.add_column("Epoch", style="cyan")
+            for i, (k) in enumerate(aggregate_metrics.keys()):
+                table.add_column(k, style=cols[i % len(cols)])
 
-        row_data = [str(epoch) if epoch is not None else "NA"]
-        row_data.extend(str(v) for v in aggregate_metrics.values())
-        table.add_row(*row_data)
+            row_data = [str(epoch) if epoch is not None else "NA"]
+            row_data.extend(str(v) for v in aggregate_metrics.values())
+            table.add_row(*row_data)
 
-        progress_bar.console.print(table)
+            progress_bar.console.print(table)
 
         return aggregate_metrics

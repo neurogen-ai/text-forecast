@@ -9,7 +9,10 @@ what the Engine calls into.
 
 The Engine is the only place with an epoch or batch loop. It takes an
 `Experiment`, a `RunContext`, and three Rich progress bars (epochs, train
-examples, eval examples).
+examples, eval examples) passed as `progress`. The bars are optional: pass
+`progress=None` to run headless (no TTY), which the cloud pipeline does.
+Every `add_task`, `reset`, and `advance` call is guarded behind that `None`
+check, so the loop behaves identically either way.
 
 `fit(start_epoch, run_id)` runs this per epoch, in order:
 
@@ -28,6 +31,9 @@ val loader by default) and computes `val_*` metrics. The eval app reuses it with
 windowed loaders.
 
 Progress totals come from the sampler when one exists, otherwise the dataset.
+In headless mode the rich table render is skipped too: `tracker.report()`
+takes `progress_bar=None` and returns the aggregated metrics dict without
+drawing a table.
 
 ## Strategies (`strategies/`)
 
