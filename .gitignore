@@ -14,7 +14,8 @@ setup.py
 # Other
 src/models/trace.json
 *config.toml
-plans/
+plans/*
+!plans/README.md
 mlruns/
 mlartifacts/
 cmd.sh
