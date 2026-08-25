@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 from config.env import Env
 from config.experiment import Experiment
 from config.runtime import RunContext
-from data.datasets.graph_dataset import GraphDataset, GraphDatasetConfig
+from data.datasets.graph_dataset import GraphDataset, CitationGraphDatasetConfig
 from data.datasets.types import CitationGraphDatasetOutput
 from data.formaters import GraphFormater
 from data.sources import build_default_source_backend
@@ -72,7 +72,7 @@ def build(
         "max_mem_rows": int(1e6),
     }
 
-    train_config = GraphDatasetConfig(
+    train_config = CitationGraphDatasetConfig(
         **base_dataset_kwargs,
         name="train-dataset",
         max_len=400,
@@ -82,7 +82,7 @@ def build(
         weights=torch.tensor([1.07, 0.93]),
         subsample=subsample,
     )
-    val_config = GraphDatasetConfig(
+    val_config = CitationGraphDatasetConfig(
         **base_dataset_kwargs,
         name="test-dataset",
         max_len=400,
