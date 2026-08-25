@@ -88,7 +88,7 @@ class CitationGraphDataset[T_Config](Dataset[CitationGraphDatasetOutput]):
             return_id=config.return_id,
             weights=config.weights,
         )
-        self.data_path = source.resolve()
+        self.data_path = assert_dataset_present(source, config.name)
         self.meta_cols = config.meta_cols
         self.filter = config.filter
         self.t_start = config.t_start

@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict
 from torch import Tensor
 from torch.utils.data import Dataset, default_collate  # type: ignore[reportUnknownVariableType]
 
+from data.datasets.presence import assert_dataset_present
 from data.datasets.truncation import TruncateMethod, apply_truncation_policy
 from data.datasets.types import TokenBatch
 from data.sources import DataSource
@@ -75,7 +76,7 @@ class TextTokenDataset(Dataset[TokenBatch]):
         super().__init__()
         self.config = config
         self.source = source
-        self.data_path = source.resolve()
+        self.data_path = assert_dataset_present(source, config.name)
         self.max_len = config.max_len
         self.pad_value = config.pad_token_id
         self.pad = config.pad

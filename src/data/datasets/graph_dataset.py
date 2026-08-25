@@ -12,6 +12,7 @@ from torch import Tensor
 from torch.utils.data import Dataset
 
 from data.formaters import Formater, GraphFormater
+from data.datasets.presence import assert_dataset_present
 from data.sources import DataSource
 from utils import component
 from utils.logging import setup_logger
@@ -87,7 +88,7 @@ class GraphDataset[T_Config](Dataset[CitationGraphDatasetOutput]):
             return_id=config.return_id,
             weights=config.weights,
         )
-        self.data_path = source.resolve()
+        self.data_path = assert_dataset_present(source, config.name)
         self.meta_cols = config.meta_cols
         self.filter = config.filter
         self.t_start = config.t_start

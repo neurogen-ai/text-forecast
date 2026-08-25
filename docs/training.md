@@ -69,6 +69,21 @@ stays inside the venue, jobs never carry one), and `model_source_file`
 (resolves a model's source file through the imported module rather than a
 project-root marker).
 
+## Cross-runtime resume and staged data
+
+MLflow artifacts are the canonical checkpoint store. A checkpoint saved on
+Modal resumes locally and vice versa with no new code paths: the same
+`MlflowCheckpointProcessor` uploads on save (`artifact_loc` is in-container
+scratch on the checkpoint volume) and downloads on load. Resume with
+`--load-id <run> --load-epoch <n>` from either venue.
+
+A missing staged dataset fails fast when the dataset is constructed:
+`assert_dataset_present` (in `data/datasets/presence.py`) resolves the source
+and raises `FileNotFoundError` naming the resolved path instead of letting an
+empty Modal volume surface as an opaque polars scan error deep in training.
+Produce the dataset with `citef preprocess --runtime modal` before training on
+Modal.
+
 ## Strategies (`strategies/`)
 
 A strategy owns device placement, the per-batch step, and optimizer/scheduler
