@@ -1,30 +1,29 @@
 """Modal runtime: volumes, image, GPU embedder, and remote job dispatch."""
 
+from dataclasses import replace
 from logging import getLogger
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import modal
 
-from config.env import load_env
+from config.env import Env, load_env, modal_runtime_config
+from config.loader import read_experiment_name
 from data.pipeline.describe import DescribeJob, run_describe_pipeline
 from data.pipeline.engineer import EngineerJob, run_engineer_pipeline
 from data.preprocess.embed_modal import ModalEmbedder
 from data.preprocess.embed_huggingface import EMBEDDERS, EmbedderConfig
 from data.preprocess.pipeline import PreprocessJob, run_preprocess_pipeline
 from data.sources.base import DataSource
+from runtime.base import RunResult, Runtime, TextEmbedder
+from runtime.modal_env import container_env, remote_tracking_uri
+from runtime.run_lifecycle import create_run
+from training.pipeline.eval import EvalJob, run_eval_pipeline
+from training.pipeline.train import TrainJob, run_train_pipeline
 from utils.logging import setup_logger
-
-from config.env import Env
-from runtime.base import Runtime, TextEmbedder
 
 logger = getLogger(__name__)
 _ = setup_logger(logger)
-
-if TYPE_CHECKING:
-    from runtime.base import RunResult
-    from training.pipeline.eval import EvalJob
-    from training.pipeline.train import TrainJob
 
 # Volume labels mounted by the remote preprocess function and GPU embedder. These
 # are module constants because Modal function decorators are evaluated at import time.
@@ -40,11 +39,36 @@ _GPU_TYPE = _MODAL_CONFIG.get("gpu", "L4")
 _PYTHON_VERSION = _MODAL_CONFIG.get("python_version", "3.12")
 _EMBEDDER_BATCH_SIZE = int(_MODAL_CONFIG.get("embedder_batch_size", 64))
 
+# Training/eval volume and GPU settings (2.0 step 6). ``checkpoint_volume`` is
+# required: without it there is no in-container scratch for checkpoints. The
+# modal extra is only imported when ``--runtime modal`` is requested, and the
+# step-5 migration note expects these keys to be present before remote
+# train/eval is used.
+_CHECKPOINT_VOLUME_LABEL = _MODAL_CONFIG.get("checkpoint_volume")
+if not _CHECKPOINT_VOLUME_LABEL:
+    raise ValueError(
+        "[runtime.modal].checkpoint_volume is required to use the Modal "
+        "runtime. Add it to config/config.toml under [runtime.modal]."
+    )
+_TRAIN_GPU = _MODAL_CONFIG.get("train_gpu", "A10G")
+_TRAIN_TIMEOUT = int(_MODAL_CONFIG.get("timeout", 86400))
+STAGED_VOLUME_LABEL = _MODAL_CONFIG.get("staged_volume", "openalex-staged")
+
+# GPU snapshotting gives fast cold starts for the training container, but
+# ``torch.compile`` cannot survive a snapshot restore, so the dispatcher
+# clears ``compile_mode`` on the job whenever this is enabled (plan 2.0
+# §10.1 caveat).
+_SNAPSHOT_ENABLED = True
+
 logger.debug(
-    "Modal runtime config: gpu=%r python_version=%r embedder_batch_size=%r",
+    "Modal runtime config: gpu=%r python_version=%r embedder_batch_size=%r "
+    "checkpoint_volume=%r train_gpu=%r timeout=%r",
     _GPU_TYPE,
     _PYTHON_VERSION,
     _EMBEDDER_BATCH_SIZE,
+    _CHECKPOINT_VOLUME_LABEL,
+    _TRAIN_GPU,
+    _TRAIN_TIMEOUT,
 )
 
 preprocess_image = (
@@ -63,6 +87,12 @@ app = modal.App(MODAL_APP_NAME)
 volume = modal.Volume.from_name(VOLUME_LABEL, create_if_missing=True)
 embedders_volume = modal.Volume.from_name(
     EMBEDDERS_VOLUME_LABEL, create_if_missing=True
+)
+train_staged_volume = modal.Volume.from_name(
+    STAGED_VOLUME_LABEL, create_if_missing=True
+)
+train_checkpoint_volume = modal.Volume.from_name(
+    _CHECKPOINT_VOLUME_LABEL, create_if_missing=True
 )
 
 
@@ -122,6 +152,50 @@ class ModalEmbeddingGPU:
             len(texts),
         )
         return result
+
+
+
+@app.cls(
+    gpu=_TRAIN_GPU,
+    image=preprocess_image,
+    volumes={
+        f"/modal/{STAGED_VOLUME_LABEL}": train_staged_volume,
+        f"/modal/{_CHECKPOINT_VOLUME_LABEL}": train_checkpoint_volume,
+    },
+    timeout=_TRAIN_TIMEOUT,
+    scaledown_window=300,
+    enable_memory_snapshot=_SNAPSHOT_ENABLED,
+    experimental_options=(
+        {"enable_gpu_snapshot": True} if _SNAPSHOT_ENABLED else None
+    ),
+)
+class ModalTrainingGPU:
+    """Remote training/eval GPU container (2.0 step 6).
+
+    Runs the venue-independent train/eval pipelines headless (``progress=None``,
+    plan §11). The image and GPU come from config; the staged and checkpoint
+    volumes are mounted exactly where ``container_env`` maps paths.
+
+    ``torch.compile`` is disabled by dropping ``compile_mode`` on the job at
+    dispatch time when snapshotting is enabled, because compilation breaks
+    snapshot restore. Experiment files never adapt to this (plan P1).
+    """
+
+    @modal.enter(snap=True)
+    def setup(self) -> None:
+        logger.info(
+            "ModalTrainingGPU.setup: container ready gpu=%r", _TRAIN_GPU
+        )
+
+    @modal.method()
+    def train(self, job: TrainJob) -> RunResult:
+        logger.info("ModalTrainingGPU.train: starting train job")
+        return run_train_pipeline(job)
+
+    @modal.method()
+    def eval(self, job: EvalJob) -> RunResult:
+        logger.info("ModalTrainingGPU.eval: starting eval job")
+        return run_eval_pipeline(job)
 
 
 class _InContainerRuntime:
@@ -275,15 +349,98 @@ class ModalRuntime:
         logger.info("ModalRuntime.run_engineer: received result from Modal")
         return result
 
-    def run_train(self, job: "TrainJob") -> "RunResult":
-        raise NotImplementedError(
-            "Modal training lands in 2.0 step 6; use --runtime local"
+    def run_train(self, job: TrainJob) -> RunResult:
+        """Create the run client-side, then spawn a remote training container.
+
+        Fire-and-forget dispatch (plan P7): the CLI returns immediately with
+        the MLflow run id and the Modal FunctionCall id so the caller can keep
+        following the job via ``modal.FunctionCall.from_id``.
+        """
+        cfg = modal_runtime_config(self._env, require_checkpoint_volume=True)
+        tracking_uri = remote_tracking_uri(job.env, cfg)
+
+        experiment_name = read_experiment_name(job.experiment_name)
+        provisional_name = job.run_name or job.run_suffix or "train"
+        run_id = create_run(
+            env=replace(job.env, tracking_uri=tracking_uri),
+            experiment_name=experiment_name,
+            run_name=provisional_name,
+            parent_id=job.parent_id,
         )
 
-    def run_eval(self, job: "EvalJob") -> "RunResult":
-        raise NotImplementedError(
-            "Modal evaluation lands in 2.0 step 6; use --runtime local"
+        dispatch_compile = "" if _SNAPSHOT_ENABLED else job.compile_mode
+        if _SNAPSHOT_ENABLED and job.compile_mode:
+            logger.warning(
+                "torch.compile cleared for Modal snapshot restore: "
+                "compile_mode=%r dropped", job.compile_mode
+            )
+        container_job = replace(
+            job,
+            env=container_env(job.env, cfg, tracking_uri),
+            run_id=run_id,
+            compile_mode=dispatch_compile,
         )
+
+        logger.info(
+            "ModalRuntime.run_train: spawning train run=%r on %r",
+            run_id, _TRAIN_GPU,
+        )
+        with modal.enable_output():
+            call = ModalTrainingGPU().train.spawn(container_job)
+        logger.info(
+            "ModalRuntime.run_train: spawned run=%r function_call_id=%r",
+            run_id, call.object_id,
+        )
+        return RunResult(
+            run_id=run_id,
+            status="spawned",
+            checkpoints=[],
+            metrics={},
+            modal_function_call_id=str(call.object_id),
+        )
+
+    def run_eval(self, job: EvalJob) -> RunResult:
+        """Create the eval run client-side, then spawn a remote eval container."""
+        cfg = modal_runtime_config(self._env, require_checkpoint_volume=True)
+        tracking_uri = remote_tracking_uri(job.env, cfg)
+
+        training_experiment = (
+            read_experiment_name(job.module_name) if job.module_name else None
+        )
+        eval_experiment = job.experiment_name or (
+            f"{training_experiment}-EVAL"
+            if training_experiment is not None
+            else f"eval-{job.run_id}"
+        )
+        eval_run_id = create_run(
+            env=replace(job.env, tracking_uri=tracking_uri),
+            experiment_name=eval_experiment,
+            run_name=f"{job.prefix}eval-{job.run_id}",
+        )
+
+        container_job = replace(
+            job,
+            env=container_env(job.env, cfg, tracking_uri),
+            eval_run_id=eval_run_id,
+        )
+
+        logger.info(
+            "ModalRuntime.run_eval: spawning eval run=%r on %r",
+            eval_run_id, _TRAIN_GPU,
+        )
+        with modal.enable_output():
+            call = ModalTrainingGPU().eval.spawn(container_job)
+        logger.info(
+            "ModalRuntime.run_eval: spawned eval_run=%r function_call_id=%r",
+            eval_run_id, call.object_id,
+        )
+        return RunResult(
+            run_id=eval_run_id,
+            status="spawned",
+            metrics={},
+            modal_function_call_id=str(call.object_id),
+        )
+
 
 def _embedder_config(key: str) -> EmbedderConfig:
     """Return the configuration for a local embedder registry key."""

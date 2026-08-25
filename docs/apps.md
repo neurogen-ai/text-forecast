@@ -66,14 +66,22 @@ and `--epoch` to load the checkpoint from, plus a window spec: `--start-date`,
 `--end-date`.
 
 The app builds an `EvalJob`; `LocalRuntime.run_eval` creates the eval run
-client-side in `<experiment>-EVAL`, then `run_eval_pipeline` executes it. For
+client-side in `<experiment>-EVAL`, then runs `run_eval_pipeline` locally. For
 each window it slices the validation `GraphDataset` with `with_window`, runs
 one eval epoch through the Engine, and logs both metrics and prediction exports
 as MLflow artifacts (`exports/<year>`) on the eval run. The experiment file is
 downloaded from the checkpoint store, so the exact training config is reproduced
 without CLI re-specification. Only `GraphDataset`-based experiments are
 currently supported. `--no-gpu` forces CPU; `--clean-up` deletes temp files
-afterwards. Accepts `--runtime` (modal support lands with Modal training).
+afterwards.
+
+With `--runtime modal`, `ModalRuntime.run_eval` creates the eval run
+client-side (same `<experiment>-EVAL` naming), maps the job onto the Modal
+volumes (staged dataset + checkpoint scratch), and spawns a `ModalTrainingGPU`
+container that runs the identical pipeline headless. It returns immediately
+with the eval run id and the Modal FunctionCall id; follow the job with
+`modal.FunctionCall.from_id(<id>).get()`. Exports land as
+`exports/<year>` artifacts on that run either way.
 
 ## train
 
@@ -92,6 +100,18 @@ logged as artifacts, along with dataset sizes and model class. Checkpoints go
 through the experiment's configured processor (local, MLflow store, or S3).
 
 `--runtime` to select the execution backend (overrides `[runtime].default`).
+
+With `--runtime modal`, `ModalRuntime.run_train` creates the MLflow run
+client-side (plan P6), maps the job onto the Modal volumes, and spawns a
+`ModalTrainingGPU` container running the identical pipeline headless. It
+returns immediately with the MLflow run id and the Modal FunctionCall id
+(fire-and-forget, plan P7); poll with
+`modal.FunctionCall.from_id(<id>).get()` or open the run in the MLflow UI.
+Checkpoints written in the container are uploaded as MLflow artifacts, so a
+Modal-trained run resumes locally (and vice versa) with no extra steps.
+`torch.compile` is dropped when GPU snapshotting is enabled, since
+compilation breaks snapshot restore; this is a dispatch decision and
+experiment files are untouched.
 
 ### Modal config
 

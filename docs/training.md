@@ -55,9 +55,13 @@ functions that execute a full train or eval schedule:
   as `exports/<year>` MLflow artifacts on the eval run.
 
 Both functions are identical on every execution venue; machine-level settings
-arrive only via the `Env` on the job. In step 3 nothing dispatches them yet -
-the CLI apps still drive the Engine directly, and wiring the apps and runtimes
-onto these pipelines comes later in the 2.0 series.
+arrive only via the `Env` on the job. Dispatch is owned by the `Runtime`
+backends: `LocalRuntime` creates the MLflow run client-side and runs the
+pipeline in-process; `ModalRuntime` (`--runtime modal`) maps the `Env` onto
+Modal volumes and spawns a headless `ModalTrainingGPU` container running the
+same pipeline, returning a `RunResult(status="spawned")` plus the Modal
+FunctionCall id for follow-up. The CLI apps stay thin parse-and-delegate
+layers.
 
 Shared helpers live in `pipeline/_common.py`: `experiment_file` (temp-file
 context manager for experiment bytes), `build_run_context` (device selection
