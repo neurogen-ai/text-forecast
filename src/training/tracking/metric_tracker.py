@@ -71,6 +71,15 @@ class MetricTracker:
         # rich console
         self.console: Console = Console()
 
+    @staticmethod
+    def _infer_n_out(logits: Tensor) -> int:
+        """Infer output arity from a gathered logits tensor.
+
+        The last dimension is the class count for ``(B, n_out)`` stores; flat
+        or scalar-shaped stores count as single-output (binary).
+        """
+        return int(logits.shape[-1]) if logits.ndim > 1 else 1
+
     def _init_metric_stores(self) -> None:
         self.metric_store: dict[str, list[MetricTuple]] = {}
         self.metric_df: pd.DataFrame = pd.DataFrame()

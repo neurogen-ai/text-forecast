@@ -18,6 +18,7 @@ from sklearn.metrics import (  # pyright: ignore[reportUnknownVariableType, repo
     recall_score,
     roc_auc_score,
 )
+from torch import Tensor
 from utils.logging import setup_logger
 
 from .metric_tracker import MetricTracker
@@ -107,7 +108,7 @@ class BinaryClassificationTracker(MetricTracker):
             logger.error(e)
 
         try:
-            pr_plot = PrecisionRecallDisplay.from_predictions(
+            pr_plot = PrecisionRecallDisplay.from_predictions(  # pyright: ignore[reportUnknownMemberType]
                 y_true,
                 probs,
                 plot_chance_level=True,
@@ -195,6 +196,13 @@ class BinaryClassificationTracker(MetricTracker):
         if logits.size(0) != y_true.size(0):
             logger.error(
                 f"Different n. examples in logits and y_true: logits shape: {logits.shape}, y_true shape:{y_true.shape}"
+            )
+            return
+
+        n_out = self._infer_n_out(logits)
+        if n_out > 1:
+            self._calc_multilabel_metrics(
+                prefix=prefix, step=step, probs=probs, y_true=y_true, n_out=n_out
             )
             return
 
@@ -297,3 +305,83 @@ class BinaryClassificationTracker(MetricTracker):
 
         except Exception as e:
             logger.error(f"theta: {theta} | error: {e}")
+
+    def _calc_multilabel_metrics(
+        self,
+        *,
+        prefix: str,
+        step: int,
+        probs: Tensor,
+        y_true: Tensor,
+        n_out: int,
+    ) -> None:
+        """Multi-label path (sub-plan 1.4.5).
+
+        Per-class threshold metrics (0.5) aggregated macro and micro, plus
+        per-class PR/ROC plots capped at the first 10 classes to protect
+        MLflow artifact volume.
+        """
+        if probs.size(0) != y_true.size(0) or y_true.numel() != probs.numel():
+            logger.error(
+                f"Different n. examples in logits and y_true: logits shape: {probs.shape}, y_true shape:{y_true.shape}"
+            )
+            return
+
+        probs = probs.reshape(-1, n_out)
+        y_multi = (y_true.reshape(-1, n_out) > 0.5).long()
+        preds = (probs > 0.5).long()
+        n_examples = probs.shape[0]
+
+        for average in ("macro", "micro"):
+            try:
+                f1 = f1_score(
+                    y_multi.numpy(), preds.numpy(), average=average, zero_division=0  # pyright: ignore[reportCallIssue, reportArgumentType]
+                )
+                self.log_metric(f"{prefix}_F1:{average}", f1, n_examples)
+            except Exception as e:
+                logger.error(e)
+            try:
+                precision = precision_score(
+                    y_multi.numpy(), preds.numpy(), average=average, zero_division=0  # pyright: ignore[reportCallIssue, reportArgumentType]
+                )
+                self.log_metric(
+                    f"{prefix}_precision:{average}", precision, n_examples
+                )
+            except Exception as e:
+                logger.error(e)
+            try:
+                recall = recall_score(
+                    y_multi.numpy(), preds.numpy(), average=average, zero_division=0  # pyright: ignore[reportCallIssue, reportArgumentType]
+                )
+                self.log_metric(f"{prefix}_recall:{average}", recall, n_examples)
+            except Exception as e:
+                logger.error(e)
+
+        plot_cap = min(n_out, 10)
+        if plot_cap < n_out:
+            logger.info(
+                f"{n_out} classes present, plotting first {plot_cap} only"
+            )
+        for c in range(plot_cap):
+            try:
+                roc_plot = RocCurveDisplay.from_predictions(  # pyright: ignore[reportUnknownMemberType]
+                    y_multi[:, c].numpy(), probs[:, c].numpy()
+                )
+                mlflow.log_figure(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                    roc_plot.figure_,  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+                    f"{prefix}-plots/ROC/roc_curve-class-{c}-step-{step}.png",
+                    save_kwargs={"dpi": 72},
+                )
+            except Exception as e:
+                logger.error(e)
+            try:
+                pr_plot = PrecisionRecallDisplay.from_predictions(  # pyright: ignore[reportUnknownMemberType]
+                    y_multi[:, c].numpy(), probs[:, c].numpy()
+                )
+                mlflow.log_figure(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                    pr_plot.figure_,  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+                    f"{prefix}-plots/PR/pr_curve-class-{c}-step-{step}.png",
+                    save_kwargs={"dpi": 72},
+                )
+            except Exception as e:
+                logger.error(e)
