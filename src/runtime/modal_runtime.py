@@ -2,7 +2,7 @@
 
 from logging import getLogger
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import modal
 
@@ -20,6 +20,11 @@ from runtime.base import Runtime, TextEmbedder
 
 logger = getLogger(__name__)
 _ = setup_logger(logger)
+
+if TYPE_CHECKING:
+    from runtime.base import RunResult
+    from training.pipeline.eval import EvalJob
+    from training.pipeline.train import TrainJob
 
 # Volume labels mounted by the remote preprocess function and GPU embedder. These
 # are module constants because Modal function decorators are evaluated at import time.
@@ -269,6 +274,16 @@ class ModalRuntime:
             result = fn.remote(job)
         logger.info("ModalRuntime.run_engineer: received result from Modal")
         return result
+
+    def run_train(self, job: "TrainJob") -> "RunResult":
+        raise NotImplementedError(
+            "Modal training lands in 2.0 step 6; use --runtime local"
+        )
+
+    def run_eval(self, job: "EvalJob") -> "RunResult":
+        raise NotImplementedError(
+            "Modal evaluation lands in 2.0 step 6; use --runtime local"
+        )
 
 def _embedder_config(key: str) -> EmbedderConfig:
     """Return the configuration for a local embedder registry key."""

@@ -1,22 +1,14 @@
 from __future__ import annotations
 
-import os
 import warnings
 from logging import getLogger
 from pathlib import Path
 
-
-import mlflow
-import torch
 import typer
 
-from builders import build_progress_bars
 from config.env import load_env
-from config.loader import load_experiment
-from config.runtime import RunContext
-from training.checkpointing import CheckpointRef
-from training.checkpointing.base import ExperimentFileStore
-from training.engine import Engine
+from runtime.factory import build_runtime
+from training.pipeline.train import TrainJob
 from utils import get_root_dir
 from utils.logging import setup_logger
 
@@ -34,14 +26,6 @@ def _experiment_file_path(name: str) -> Path:
         / "config"
         / "experiments"
         / f"{name}.py"
-    )
-
-
-def _model_source_file(model: torch.nn.Module) -> Path:
-    return (
-        get_root_dir(markers=("pyproject.toml",))
-        / "src"
-        / (f"{model.__module__}".replace(".", os.sep) + ".py")
     )
 
 
@@ -110,6 +94,11 @@ def main(
         "--model-only",
         help="Load only model weights on resume (skip optimizer/scheduler)",
     ),
+    runtime_name: str | None = typer.Option(
+        None,
+        "--runtime",
+        help="Execution backend (local or modal); overrides [runtime].default",
+    ),
     tracking_uri: str | None = typer.Option(
         None,
         "--tracking-uri",
@@ -132,13 +121,6 @@ def main(
         load_epoch is None and not load_id
     ), "load id/epoch only work together"
 
-    device = torch.device(
-        "cuda" if torch.cuda.is_available() and gpu else "cpu"
-    )
-    assert device.type == "cuda" or not gpu, (
-        "No GPU available on this device, use --no-gpu option"
-    )
-
     env = load_env(
         overrides={
             k: v
@@ -150,93 +132,34 @@ def main(
         }
     )
 
-    runtime = RunContext(
-        device=device,
-        dtype=torch.float32,
-        compile_mode=compile,
-        fullgraph=fullgraph,
-        subsample=subsample,
-    )
+    runtime = build_runtime(runtime_name, env)
 
     root_obj = ctx.find_root().obj
     experiment_name: str = root_obj["experiment_name"]
-    exp = load_experiment(experiment_name, runtime, env=env)
 
-    if runtime.compile_mode:
-        exp.model.compile(
-            mode=runtime.compile_mode, fullgraph=runtime.fullgraph
-        )
-
-    start_epoch_int = (
-        start_epoch
-        if start_epoch is not None
-        else (load_epoch + 1 if load_epoch is not None else 1)
+    job = TrainJob(
+        experiment_name=experiment_name,
+        experiment_source=_experiment_file_path(experiment_name).read_bytes(),
+        run_name=run_name,
+        run_suffix=run_suffix,
+        parent_id=parent_id,
+        start_epoch=start_epoch,
+        compile_mode=compile,
+        fullgraph=fullgraph,
+        load_id=load_id,
+        load_epoch=load_epoch,
+        model_only=model_only,
+        subsample=subsample,
+        gpu=gpu,
+        progress=progress,
+        env=env,
     )
 
-    model_name = type(exp.model).__name__
-    if run_suffix:
-        run_name = f"{model_name}-{run_suffix}"
-    if subsample:
-        run_name += "-DRY"
-
+    result = runtime.run_train(job)
     logger.info(
-        f'Run: "{run_name}" (Model: {model_name}) | Device: {device}'
-        f'{" | DRY-RUN" if subsample else ""}'
+        f"Run {result.run_id} {result.status}"
+        f" | checkpoints: {len(result.checkpoints)}"
     )
-
-    mlflow.set_tracking_uri(env.tracking_uri)
-    mlflow.set_experiment(exp.experiment_name)
-    logger.info(f"Mlflow connection established at {env.tracking_uri}")
-
-    if load_id and load_epoch is not None:
-        checkpoint = exp.checkpoints.load(
-            ref=CheckpointRef(run_id=load_id, epoch=load_epoch),
-            map_location=device,
-        )
-        exp.model.load_state_dict(checkpoint.model)
-        logger.info("Model state loaded")
-        if not model_only:
-            exp.strategy.load_optimizer_state(
-                optimizer=checkpoint.optimizer,
-                scheduler=checkpoint.scheduler,
-            )
-            logger.info("Optimizer and scheduler state restored")
-
-    progress_bars = build_progress_bars(disable=not progress)
-    for pb in progress_bars:
-        try:
-            pb.start()
-        except RuntimeError:
-            # build_epoch_progress is already started.
-            pass
-    engine = Engine(
-        experiment=exp, runtime=runtime, progress=progress_bars
-    )
-
-    with mlflow.start_run(run_name=run_name, parent_run_id=parent_id):
-        mlf_run = mlflow.active_run()
-        assert mlf_run is not None
-
-        experiment_file_path = _experiment_file_path(experiment_name)
-        if experiment_file_path.exists() and isinstance(
-            exp.checkpoints, ExperimentFileStore
-        ):
-            exp.checkpoints.save_experiment_file(path=experiment_file_path)
-
-        model_file = _model_source_file(exp.model)
-        if model_file.exists():
-            mlflow.log_artifact(str(model_file))
-
-        mlflow.log_params(
-            {
-                "experiment_name": exp.experiment_name,
-                "model.class": model_name,
-                "train.examples": len(exp.train_loader.dataset),
-                "val.examples": len(exp.val_loader.dataset),
-            }
-        )
-
-        engine.fit(start_epoch=start_epoch_int, run_id=mlf_run.info.run_id)
 
 
 if __name__ == "__main__":

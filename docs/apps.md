@@ -1,8 +1,9 @@
 # CLI apps
 
 `src/apps/` holds the Typer applications mounted by `src/main.py`. Each app is a
-thin layer: it parses flags, resolves the environment and data source, builds a
-job object or experiment, then hands execution to a runtime or the Engine.
+thin layer: it parses flags, resolves the environment, builds a job object,
+and delegates to `runtime.run_train(...)` / `runtime.run_eval(...)`. The app
+never branches on the runtime; the `Runtime` implementation owns execution.
 
 All apps are invoked as subcommands of `python -m src.main`, e.g.
 `python -m src.main train --name my-run --experiment transformer_class`.
@@ -64,27 +65,32 @@ and `--epoch` to load the checkpoint from, plus a window spec: `--start-date`,
 `--interval` (in years; the only unit currently supported) and optional
 `--end-date`.
 
-For each window it slices the validation `GraphDataset` with `with_window`,
-runs one eval epoch through the Engine, exports predictions to
-`<base_dir>/eval/<run_id>/run-<prefix>/<year>`, and logs metrics to MLflow under
-`<experiment>-EVAL`. The experiment file is downloaded from the checkpoint
-store, so the exact training config is reproduced without CLI re-specification.
-Predictions are written under the local source base dir (`[source.local].base_dir`).
-`--no-gpu` forces CPU; `--clean-up` deletes temp checkpoints afterwards.
+The app builds an `EvalJob`; `LocalRuntime.run_eval` creates the eval run
+client-side in `<experiment>-EVAL`, then `run_eval_pipeline` executes it. For
+each window it slices the validation `GraphDataset` with `with_window`, runs
+one eval epoch through the Engine, and logs both metrics and prediction exports
+as MLflow artifacts (`exports/<year>`) on the eval run. The experiment file is
+downloaded from the checkpoint store, so the exact training config is reproduced
+without CLI re-specification. Only `GraphDataset`-based experiments are
+currently supported. `--no-gpu` forces CPU; `--clean-up` deletes temp files
+afterwards. Accepts `--runtime` (modal support lands with Modal training).
 
 ## train
 
-Main training entry point. Loads the selected experiment module via
-`config.loader.load_experiment`, optionally torch-compiles the model
-(`--compile mode`, `--fullgraph`), restores state from `--load-id` +
-`--load-epoch` if resuming (`--model-only` skips optimizer/scheduler), then runs
-`engine.fit()` inside an MLflow run.
+Main training entry point. The app reads the experiment file's bytes into a
+`TrainJob`; `LocalRuntime.run_train` creates the MLflow run client-side, then
+`run_train_pipeline` loads the experiment from those bytes, optionally
+torch-compiles the model (`--compile mode`, `--fullgraph`), restores state from
+`--load-id` + `--load-epoch` if resuming (`--model-only` skips
+optimizer/scheduler), and runs `engine.fit()` inside the pre-created run.
 
 Run naming: `--name` sets it explicitly, or `--suffix` produces
 `<ModelClass>-<suffix>`; exactly one of the two is required. `-DRY` is appended
-when `--subsample` is set. The experiment module file and model source file are
+when `--subsample` is set. The final name is applied once the model class is
+known inside the pipeline. The experiment module file and model source file are
 logged as artifacts, along with dataset sizes and model class. Checkpoints go
 through the experiment's configured processor (local, MLflow store, or S3).
 
 Useful flags: `--parent-id` to nest MLflow runs, `--start-epoch` to override the
-resume epoch, `--progress/--no-progress` for the Rich bars, `--gpu/--no-gpu`.
+resume epoch, `--progress/--no-progress` for the Rich bars, `--gpu/--no-gpu`,
+`--runtime` to select the execution backend (overrides `[runtime].default`).

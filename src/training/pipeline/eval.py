@@ -16,6 +16,8 @@ from config.env import Env
 from config.loader import load_experiment_from_path
 from data.datasets.graph_dataset import GraphDataset
 from runtime.base import RunResult
+from runtime.run_lifecycle import set_run_name
+from config.loader import read_experiment_name
 from training.checkpointing import CheckpointRef
 from training.checkpointing.mlflow_store import MlflowCheckpointProcessor
 from training.engine import Engine, ProgressBars
@@ -51,10 +53,12 @@ class EvalJob:
     interval: int | None = None
     interval_unit: str = "y"
     prefix: str = ""
+    module_name: str = ""      # root CLI/toml experiment module, for -EVAL naming
     experiment_name: str | None = None  # override for the eval MLflow experiment
     eval_run_id: str = ""
     dry_run: bool = False
     gpu: bool = True
+    progress: bool = True
     temp_dir: str = "./.temp/"
     clean_up: bool = False
     env: Env
@@ -86,11 +90,14 @@ def run_eval_pipeline(
         )
     t_delta = _validate(job)
 
-    # "<training-experiment>-EVAL" when the training experiment name is known;
+    # "<training-experiment>-EVAL" when the training module is known;
     # otherwise fall back to a run-derived name.
-    mlflow_experiment = (
-        f"{job.experiment_name}-EVAL"
-        if job.experiment_name is not None
+    training_experiment = (
+        read_experiment_name(job.module_name) if job.module_name else None
+    )
+    mlflow_experiment = job.experiment_name or (
+        f"{training_experiment}-EVAL"
+        if training_experiment is not None
         else f"eval-{job.run_id}"
     )
 
@@ -101,7 +108,7 @@ def run_eval_pipeline(
     processor = MlflowCheckpointProcessor(
         artifact_loc=job.env.artifact_loc,
         tracking_uri=job.env.tracking_uri,
-        experiment_name=job.experiment_name or mlflow_experiment,
+        experiment_name=training_experiment or mlflow_experiment,
     )
 
     if not processor.experiment_file_exists(run_id=job.run_id):
@@ -140,6 +147,10 @@ def run_eval_pipeline(
 
     with mlflow.start_run(run_id=job.eval_run_id):
         mlflow.set_tracking_uri(job.env.tracking_uri)
+        set_run_name(
+            job.eval_run_id,
+            f"{job.prefix}-{type(exp.model).__name__}-{job.run_id}",
+        )
         mlflow.log_params(
             {
                 "eval.source_run_id": job.run_id,

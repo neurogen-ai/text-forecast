@@ -2,8 +2,8 @@
 
 `src/training/` owns everything that happens inside a run: the epoch loop,
 strategies, losses, optimizers, schedulers, metric trackers, and checkpointing.
-The CLI apps build an `Experiment` and hand it to the Engine; this page explains
-what the Engine calls into.
+The CLI apps build a `TrainJob`/`EvalJob` and hand it to the runtime; this page
+explains what the pipelines call into.
 
 ## The Engine (`engine.py`)
 

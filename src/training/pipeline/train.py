@@ -9,6 +9,7 @@ from mlflow.tracking import MlflowClient
 from config.env import Env
 from config.loader import load_experiment_from_path
 from runtime.base import RunResult
+from runtime.run_lifecycle import set_run_name
 from training.checkpointing import CheckpointRef
 from training.checkpointing.base import ExperimentFileStore
 from training.engine import Engine, ProgressBars
@@ -31,7 +32,8 @@ class TrainJob:
 
     experiment_name: str       # module name (root CLI/toml resolution)
     experiment_source: bytes   # raw experiment file bytes
-    run_name: str
+    run_name: str = ""
+    run_suffix: str = ""      # composed with the model class name in-pipeline
     parent_id: str | None = None
     start_epoch: int | None = None
     compile_mode: str = ""
@@ -41,6 +43,7 @@ class TrainJob:
     model_only: bool = False   # skip optimizer/scheduler restore on resume
     subsample: int | None = None
     gpu: bool = True
+    progress: bool = True
     env: Env
     run_id: str = ""
 
@@ -98,6 +101,15 @@ def run_train_pipeline(
         mlflow.set_tracking_uri(job.env.tracking_uri)
 
         with mlflow.start_run(run_id=job.run_id):
+            model_name = type(exp.model).__name__
+            if job.run_name:
+                final_name = job.run_name
+            else:
+                final_name = f"{model_name}-{job.run_suffix}"
+                if job.subsample:
+                    final_name += "-DRY"
+            set_run_name(job.run_id, final_name)
+
             if isinstance(exp.checkpoints, ExperimentFileStore):
                 exp.checkpoints.save_experiment_file(path=path)
 
@@ -108,7 +120,7 @@ def run_train_pipeline(
             mlflow.log_params(
                 {
                     "experiment_name": exp.experiment_name,
-                    "model.class": type(exp.model).__name__,
+                    "model.class": model_name,
                     "train.examples": len(exp.train_loader.dataset),
                     "val.examples": len(exp.val_loader.dataset),
                 }

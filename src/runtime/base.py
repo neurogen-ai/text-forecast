@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from data.pipeline.describe import DescribeJob
     from data.pipeline.engineer import EngineerJob
     from data.preprocess.pipeline import PreprocessJob
+    from training.pipeline.eval import EvalJob
+    from training.pipeline.train import TrainJob
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -56,3 +58,7 @@ class Runtime(Protocol):
     def run_describe(self, job: DescribeJob) -> None: ...
 
     def run_engineer(self, job: EngineerJob) -> DataSource: ...
+
+    def run_train(self, job: TrainJob) -> RunResult: ...
+
+    def run_eval(self, job: EvalJob) -> RunResult: ...

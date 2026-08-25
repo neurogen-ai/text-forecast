@@ -1,40 +1,20 @@
 from __future__ import annotations
 
-import logging
-import os
-import shutil
-import time
 from datetime import datetime
 from logging import getLogger
 from pathlib import Path
-from typing import NamedTuple
 
-import mlflow
-import torch
-import torch._logging
 import typer
-from torch.utils.data import DataLoader
 
-from builders import build_eval_example_progress
 from config.env import load_env
-from config.loader import load_experiment_from_path
-from config.runtime import RunContext
-from data.datasets.graph_dataset import GraphDataset
-from training.checkpointing import CheckpointRef
-from training.checkpointing.mlflow_store import MlflowCheckpointProcessor
-from training.engine import Engine
+from runtime.factory import build_runtime
+from training.pipeline.eval import EvalJob
 from utils.logging import setup_logger
 
 logger = getLogger(__name__)
 _ = setup_logger(logger)
 
 app = typer.Typer(pretty_exceptions_enable=False)
-
-
-class DateTimeVals(NamedTuple):
-    year: int
-    month: int
-    day: int
 
 
 @app.callback(invoke_without_command=True)
@@ -59,8 +39,13 @@ def main(
     interval_unit: str = typer.Option(
         "y", "--interval-unit", help="Unit of interval quantity"
     ),
-    experiment: str = typer.Option(
-        "", "--experiment", help="MLflow experiment name override"
+    experiment: str | None = typer.Option(
+        None, "--experiment", help="Eval MLflow experiment name override"
+    ),
+    runtime_name: str | None = typer.Option(
+        None,
+        "--runtime",
+        help="Execution backend (local or modal); overrides [runtime].default",
     ),
     tracking_uri: str | None = typer.Option(
         None, "--tracking-uri", help="Override MLflow tracking URI"
@@ -98,147 +83,29 @@ def main(
         }
     )
 
-    base_dir = Path(env.source.get("local", {}).get("base_dir", "/tmp/data"))
-    PREDICTIONS_DIR = base_dir / "eval" / run_id / f"run-{prefix}"
-
-    device = torch.device(
-        "cuda" if torch.cuda.is_available() and gpu else "cpu"
-    )
-    assert device.type == "cuda" or not gpu, (
-        "No GPU available on this device, use --no-gpu option"
-    )
-
-    runtime = RunContext(
-        device=device,
-        dtype=torch.float32,
-        subsample=512 if dry_run else None,
-    )
+    runtime = build_runtime(runtime_name, env)
 
     root_obj = ctx.find_root().obj
-    mlflow_experiment = experiment or f"{root_obj['experiment_name']}-EVAL"
-    if PREDICTIONS_DIR.exists():
-        logger.warning(f"Removing data in {PREDICTIONS_DIR}")
-        time.sleep(5)
-        shutil.rmtree(PREDICTIONS_DIR)
-    os.makedirs(PREDICTIONS_DIR)
 
-    torch._logging.set_logs(all=logging.ERROR)
-    logger.info(f"MLflow experiment: {mlflow_experiment}")
-
-    mlflow.set_tracking_uri(env.tracking_uri)
-    mlflow.set_experiment(mlflow_experiment)
-    logger.info(f"MLflow tracking URI connected: {env.tracking_uri}")
-
-    CHECKPOINT_DIR = temp_dir / run_id / "checkpoints"
-    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-
-    processor = MlflowCheckpointProcessor(
-        artifact_loc=env.artifact_loc,
-        tracking_uri=env.tracking_uri,
-        experiment_name=mlflow_experiment,
+    job = EvalJob(
+        run_id=run_id,
+        epoch=epoch,
+        start_date=start_date,
+        end_date=end_date,
+        interval=interval,
+        interval_unit=interval_unit,
+        prefix=prefix,
+        module_name=root_obj["experiment_name"],
+        experiment_name=experiment,
+        dry_run=dry_run,
+        gpu=gpu,
+        temp_dir=str(temp_dir),
+        clean_up=clean_up,
+        env=env,
     )
 
-    if not processor.experiment_file_exists(run_id=run_id):
-        raise typer.BadParameter(
-            f"No experiment file found for run {run_id}"
-        )
-
-    experiment_file_path = processor.download_experiment_file(
-        run_id=run_id, dest=CHECKPOINT_DIR
-    )
-    exp = load_experiment_from_path(experiment_file_path, runtime, env=env)
-
-    checkpoint = processor.load(
-        ref=CheckpointRef(run_id=run_id, epoch=epoch),
-        map_location=device,
-    )
-    exp.model.load_state_dict(checkpoint.model)
-    exp.model.eval()
-    if device.type == "cuda":
-        exp.model.compile(mode="max-autotune")
-
-    logger.info(f"Model {exp.model.__module__} loaded to {device}")
-
-    example_progress_bar = build_eval_example_progress(disable=False)
-    example_progress_bar.start()
-    engine = Engine(
-        experiment=exp,
-        runtime=runtime,
-        progress=(
-            example_progress_bar,
-            example_progress_bar,
-            example_progress_bar,
-        ),
-    )
-
-    t_delta_map = {"y": DateTimeVals(year=interval, month=0, day=0)}
-    assert interval_unit in t_delta_map, (
-        f"Interval unit must be one of: {list(t_delta_map.keys())}"
-    )
-    T_DELTA = t_delta_map[interval_unit]
-
-    current_t_start = start_date
-    base_dataset = exp.val_loader.dataset
-    if not isinstance(base_dataset, GraphDataset):
-        raise TypeError("Eval windows require a GraphDataset")
-
-    with mlflow.start_run(
-        run_name=f"{prefix}-{type(exp.model).__name__}-{run_id}"
-    ):
-        mlflow.log_params(ctx.params)
-
-        while True:
-            current_t_end = datetime(
-                current_t_start.year + T_DELTA.year,
-                current_t_start.month + T_DELTA.month,
-                current_t_start.day + T_DELTA.day,
-            )
-            if end_date is not None and current_t_end > end_date:
-                current_t_end = end_date
-
-            windowed = base_dataset.with_window(
-                t_start=current_t_start.date(),
-                t_end=current_t_end.date(),
-            )
-            window_loader = DataLoader(
-                dataset=windowed,
-                batch_size=exp.val_loader.batch_size,
-                num_workers=exp.val_loader.num_workers,
-                prefetch_factor=exp.val_loader.prefetch_factor,
-                persistent_workers=exp.val_loader.persistent_workers,
-                pin_memory=exp.val_loader.pin_memory,
-                shuffle=False,
-                drop_last=exp.val_loader.drop_last,
-            )
-
-            exp.tracker.export = True
-            exp.tracker.export_loc = PREDICTIONS_DIR / f"{current_t_start.year}"
-
-            engine.eval_epoch(epoch=current_t_start.year, loader=window_loader)
-            metrics = exp.tracker.report(
-                progress_bar=example_progress_bar,
-                epoch=current_t_start.year,
-            )
-            if metrics:
-                mlflow.log_metrics(
-                    metrics,
-                    step=current_t_start.year,
-                    timestamp=current_t_start.year,
-                    synchronous=False,
-                )
-            mlflow.log_metric(
-                "examples", len(windowed), step=current_t_start.year
-            )
-            exp.tracker.clear()
-
-            current_t_start = current_t_end
-            if end_date is not None and current_t_start >= end_date:
-                break
-
-    if clean_up:
-        shutil.rmtree(temp_dir / run_id, ignore_errors=True)
-
-    logger.info("Eval Finished")
+    result = runtime.run_eval(job)
+    logger.info(f"Eval run {result.run_id} {result.status}")
 
 
 if __name__ == "__main__":

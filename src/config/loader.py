@@ -49,6 +49,42 @@ def resolve_experiment_name(cli: str | None = None) -> str:
     )
 
 
+def read_experiment_name(name: str) -> str:
+    """Return the module-level ``experiment_name`` string without building.
+
+    Parses the module AST so runtime wrappers can create the MLflow run
+    client-side (plan 2.0 P6) before the experiment object graph exists. Only
+    a plain string assignment at module level counts; anything else raises.
+    """
+    import ast
+
+    module_path = _EXPERIMENTS_DIR / f"{name}.py"
+    if not module_path.exists():
+        raise ValueError(
+            f"Unknown experiment {name!r}. Available: {available_experiments()}"
+        )
+    tree = ast.parse(module_path.read_text())
+    for node in tree.body:
+        target = None
+        value = None
+        if isinstance(node, ast.Assign):
+            if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                target, value = node.targets[0], node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            target, value = node.target, node.value
+        if (
+            target is not None
+            and target.id == "experiment_name"
+            and isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+        ):
+            return value.value
+    raise ValueError(
+        f"Experiment {name!r} must declare a module-level string "
+        "'experiment_name'"
+    )
+
+
 def _load_module_from_path(module_name: str, path: Path) -> Any:
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
