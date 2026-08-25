@@ -26,6 +26,9 @@ check, so the loop behaves identically either way.
 6. Compute `train_*` metrics, call `tracker.report()`, log the returned dict to
    MLflow, then `tracker.clear()`
 
+It returns the final epoch's reported metrics dict (`None` when no epochs ran),
+which the train pipeline forwards into its `RunResult`.
+
 `eval_epoch(loader=None)` runs `strategy.validation_step` over a loader (the
 val loader by default) and computes `val_*` metrics. The eval app reuses it with
 windowed loaders.
@@ -34,6 +37,33 @@ Progress totals come from the sampler when one exists, otherwise the dataset.
 In headless mode the rich table render is skipped too: `tracker.report()`
 takes `progress_bar=None` and returns the aggregated metrics dict without
 drawing a table.
+
+## Train/eval pipelines (`pipeline/`)
+
+`src/training/pipeline/` holds frozen job dataclasses and plain runner
+functions that execute a full train or eval schedule:
+
+- `TrainJob` / `run_train_pipeline(job, progress=None)`: writes the job's raw
+  experiment-file bytes to a temp file, builds a `RunContext`, loads the
+  experiment from that path, handles compile and checkpoint resume, then runs
+  `Engine.fit` inside the pre-created MLflow run (`job.run_id`). The runtime
+  wrapper owns creating that run client-side and stamping the id onto the job.
+- `EvalJob` / `run_eval_pipeline(job, progress=None)`: downloads the training
+  run's experiment file and checkpoint through `MlflowCheckpointProcessor`
+  (failing fast with "No experiment file found" when missing), rebuilds the
+  sliding-window loaders, and logs per-window metrics plus prediction exports
+  as `exports/<year>` MLflow artifacts on the eval run.
+
+Both functions are identical on every execution venue; machine-level settings
+arrive only via the `Env` on the job. In step 3 nothing dispatches them yet -
+the CLI apps still drive the Engine directly, and wiring the apps and runtimes
+onto these pipelines comes later in the 2.0 series.
+
+Shared helpers live in `pipeline/_common.py`: `experiment_file` (temp-file
+context manager for experiment bytes), `build_run_context` (device selection
+stays inside the venue, jobs never carry one), and `model_source_file`
+(resolves a model's source file through the imported module rather than a
+project-root marker).
 
 ## Strategies (`strategies/`)
 

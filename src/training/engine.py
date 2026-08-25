@@ -127,13 +127,15 @@ class Engine[T_Batch: _HasBatchSize]:
 
         self.experiment.tracker.calc_metrics(prefix="val", step=epoch)
 
-    def fit(self, *, start_epoch: int, run_id: str) -> None:
+    def fit(self, *, start_epoch: int, run_id: str) -> dict[str, float] | None:
         """Run the full training schedule.
 
         The loop mirrors the historical ``apps/train.py`` flow lifted here in
         phase 5: train -> scheduler step -> checkpoint -> eval -> metric report.
+        Returns the final epoch's reported metrics (``None`` when no epochs ran).
         """
         strategy = self.experiment.strategy
+        last_metrics: dict[str, float] | None = None
 
         for epoch in range(start_epoch, start_epoch + self.experiment.epochs):
             log_lrs(strategy.scheduler, epoch)
@@ -161,9 +163,11 @@ class Engine[T_Batch: _HasBatchSize]:
                 ),
                 epoch=epoch,
             )
+            last_metrics: dict[str, float] | None = metrics
             if metrics:
                 mlflow.log_metrics(
                     metrics, step=epoch, synchronous=False
                 )
             self.experiment.tracker.clear()
             self._advance_epoch()
+        return last_metrics

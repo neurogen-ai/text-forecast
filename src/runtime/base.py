@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -11,6 +12,22 @@ if TYPE_CHECKING:
     from data.pipeline.describe import DescribeJob
     from data.pipeline.engineer import EngineerJob
     from data.preprocess.pipeline import PreprocessJob
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunResult:
+    """Outcome of a train/eval job dispatched through a ``Runtime``.
+
+    For local runs ``status`` is ``"completed"`` and ``metrics`` carries the
+    final summary.  For spawned remote jobs ``status`` is ``"spawned"`` and
+    ``modal_function_call_id`` is the join key used to poll completion.
+    """
+
+    run_id: str
+    status: str
+    checkpoints: list[str] = field(default_factory=list)
+    metrics: dict[str, float] = field(default_factory=dict)
+    modal_function_call_id: str | None = None
 
 
 @runtime_checkable
