@@ -7,18 +7,21 @@ console to render into).
 
 from __future__ import annotations
 
+import pytest
 import torch
 
 import training.tracking.binary_classification_tracker as bct_module
 from training.tracking import BinaryClassificationTracker
 
 
-def _make_tracker() -> BinaryClassificationTracker:
+def _make_tracker(monkeypatch: pytest.MonkeyPatch) -> BinaryClassificationTracker:
     tracker = BinaryClassificationTracker(
         device=torch.device("cpu"), dtype=torch.float32
     )
-    # no MLflow server in unit tests
-    bct_module.mlflow.log_figure = lambda *a, **k: None  # type: ignore[assignment]
+    # no MLflow server in unit tests; monkeypatch restores after each test
+    monkeypatch.setattr(
+        bct_module.mlflow, "log_figure", lambda *a, **k: None
+    )
     return tracker
 
 
@@ -34,9 +37,11 @@ def _feed_binary(tracker: BinaryClassificationTracker, seed: int = 42, B: int = 
     tracker.process_values((y,), ("train_y",))
 
 
-def test_report_without_progress_bar_returns_metrics():
+def test_report_without_progress_bar_returns_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """Headless report returns aggregated metrics without rendering rich."""
-    tracker = _make_tracker()
+    tracker = _make_tracker(monkeypatch)
     _feed_binary(tracker)
     tracker.calc_metrics(prefix="train", step=0)
 

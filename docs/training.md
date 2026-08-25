@@ -10,7 +10,7 @@ what the Engine calls into.
 The Engine is the only place with an epoch or batch loop. It takes an
 `Experiment`, a `RunContext`, and three Rich progress bars (epochs, train
 examples, eval examples) passed as `progress`. The bars are optional: pass
-`progress=None` to run headless (no TTY), which the cloud pipeline does.
+`progress=None` to run headless (no TTY), which remote execution uses.
 Every `add_task`, `reset`, and `advance` call is guarded behind that `None`
 check, so the loop behaves identically either way.
 
