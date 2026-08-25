@@ -12,12 +12,12 @@ setup.py
 *.obj
 
 # Other
+src/models/trace.json
 *config.toml
 plans/
 mlruns/
 mlartifacts/
 cmd.sh
-models/
 notes.md
 pyrightconfig.json
 temp/
