@@ -10,7 +10,7 @@ tests (T0) now target the handler with corrected trim semantics:
 import polars as pl
 import pytest
 
-from data.preprocess.clean import EXCLUDE_LANG, EXCLUDE_QUALITY, main, run_clean
+from data.preprocess.clean import EXCLUDE_LANG, EXCLUDE_QUALITY, run_clean
 from data.preprocess.steps import CleanStep, LengthTrim
 
 # Fixture text avoids every substring in EXCLUDE_QUALITY / EXCLUDE_LANG so
@@ -93,13 +93,18 @@ def test_trim_min_and_sigma_combined():
     assert _surviving_lengths(out) == expected
 
 
-def test_shim_level_4_matches_corrected_semantics():
-    """The old shim path now agrees with the intended band semantics."""
+def test_level_4_flags_match_corrected_semantics():
+    """The old level-4 mapping now agrees with the intended band semantics."""
     lf = _fixture()
     mean, std = _length_stats()
     high = mean + 3 * std
 
-    out = main(lf=lf, col="text", min_len=10, level=4).collect()
+    step = CleanStep(
+        col="text",
+        lowercase=True,
+        trim=LengthTrim(min_chars=10, max_sigma=3.0),
+    )
+    out = run_clean(lf, step).collect()
     expected = [n for n in LENGTHS if 10 <= n <= high]
     assert _surviving_lengths(out) == expected
 

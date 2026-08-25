@@ -152,7 +152,7 @@ EXCLUDE_LANG = [
     "ß",
 ]
 
-__all__ = ["EXCLUDE_LANG", "EXCLUDE_QUALITY", "main", "run_clean"]
+__all__ = ["EXCLUDE_LANG", "EXCLUDE_QUALITY", "run_clean"]
 
 
 def _apply_trim(lf: pl.LazyFrame, col: str, trim: LengthTrim) -> pl.LazyFrame:
@@ -216,30 +216,3 @@ def run_clean(
         lf = lf.filter(pl.col(col).str.ends_with("."))
 
     return lf
-
-
-def main(
-    lf: pl.LazyFrame,
-    col: str,
-    min_len: int,
-    level: int = 1,
-) -> pl.LazyFrame:
-    """Temporary compat shim mapping old integer levels to CleanStep flags.
-
-    Kept only until plan 2.1 T2 rewires pipeline.py and removes it. Mapping:
-    level > 1 -> lowercase; level >= 3 -> trim(min_chars=min_len,
-    max_sigma=3.0); level > 4 -> require_terminal_period. Semantics differ
-    slightly from the old folded floor ``max(mean - 3σ, min_len)``: min_len
-    now acts as a hard minimum alongside the sigma cut.
-    """
-    step = CleanStep(
-        col=col,
-        lowercase=level > 1,
-        trim=(
-            LengthTrim(min_chars=min_len, max_sigma=3.0)
-            if level >= 3
-            else None
-        ),
-        require_terminal_period=level > 4,
-    )
-    return run_clean(lf, step)

@@ -5,10 +5,9 @@ from __future__ import annotations
 import json
 import math
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime
 from logging import getLogger
-from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 import polars as pl
@@ -20,9 +19,21 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 
-from data.preprocess.clean import main as clean_step
-from data.preprocess.tokenise import main as tokenise_step
+from collections.abc import Callable
+
+from data.preprocess.clean import run_clean
 from data.preprocess.embed_huggingface import EMBEDDERS
+from data.preprocess.steps import (
+    CleanStep,
+    DropNaStep,
+    EmbedStep,
+    PipelineStep,
+    StepContext,
+    TokeniseStep,
+    step_from_dict,
+    step_to_dict,
+)
+from data.preprocess.tokenise import main as tokenise_step
 from data.sources.base import DataSource
 from utils.logging import setup_logger
 if TYPE_CHECKING:
@@ -37,26 +48,19 @@ class PreprocessJob:
 
     The job contains no runtime state; it is passed to
     ``Runtime.run_preprocess`` which decides whether to execute locally or
-    dispatch to a remote container.
+    dispatch to a remote container. All per-column operations are described
+    declaratively via ``steps`` (see :mod:`data.preprocess.steps`).
     """
 
     origin: DataSource
     destination: DataSource
-    clean_cols: list[str] = field(default_factory=list)
-    clean_levels: list[int] = field(default_factory=list)
-    clean_min_len: list[int] = field(default_factory=list)
-    tokeniser: str = ""
-    tokenise_cols: list[str] = field(default_factory=list)
-    embedder_key: str = ""
-    embedder_kwargs: dict[str, Any] = field(default_factory=dict)
-    embed_cols: list[str] = field(default_factory=list)
+    steps: tuple[PipelineStep, ...] = ()
     n_partitions: int = 0
     rows_per_part: int = 0
     compression_level: int = 1
     start_date: datetime | None = None
     end_date: datetime | None = None
     field_id: list[int] = field(default_factory=list)
-    drop_na_cols: list[str] = field(default_factory=list)
     languages: list[str] = field(default_factory=list)
     types: list[str] = field(default_factory=list)
     filt_license: bool = True
@@ -65,6 +69,96 @@ class PreprocessJob:
     max_threads: int = 8
     runtime_name: str = "local"
     params: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-compatible dict; DataSource fields stay as objects."""
+        out: dict[str, Any] = {
+            f.name: getattr(self, f.name) for f in fields(self)
+        }
+        out["steps"] = [step_to_dict(s) for s in self.steps]
+        return out
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> PreprocessJob:
+        """Reconstruct a job; steps are rebuilt via ``step_from_dict``."""
+        kwargs = {k: v for k, v in d.items() if k != "steps"}
+        steps = tuple(step_from_dict(s) for s in d.get("steps", ()))
+        return cls(steps=steps, **kwargs)
+
+
+def _run_drop_na(
+    lf: pl.LazyFrame,
+    step: DropNaStep,
+    ctx: StepContext | None = None,  # noqa: ARG001 — uniform handler signature
+) -> pl.LazyFrame:
+    del ctx
+    return lf.drop_nulls(subset=list(step.cols))
+
+
+def _run_tokenise(
+    lf: pl.LazyFrame,
+    step: TokeniseStep,
+    ctx: StepContext | None = None,  # noqa: ARG001 — uniform handler signature
+) -> pl.LazyFrame:
+    del ctx
+    return tokenise_step(
+        lf=lf,
+        tokeniser_path=step.tokeniser,
+        columns=list(step.cols),
+    )
+
+
+def _run_embed(
+    lf: pl.LazyFrame,
+    step: EmbedStep,
+    ctx: StepContext,
+) -> pl.LazyFrame:
+    spec = EMBEDDERS[step.embedder_key]
+    embedder = ctx.embedder
+    assert embedder is not None  # guaranteed by StepContext construction
+
+    def embed_batch(series: pl.Series) -> pl.Series:
+        texts = [t if isinstance(t, str) else "" for t in series.to_list()]
+        vectors = embedder.encode(texts)
+        return pl.Series(
+            vectors,
+            dtype=pl.Array(pl.Float32, width=embedder.output_dim),
+        )
+
+    return (
+        lf.drop_nulls(step.cols)
+        .with_columns(
+            [
+                pl.lit(spec.bos_token) + pl.col(col) + pl.lit(spec.eos_token)
+                for col in step.cols
+            ]
+        )
+        .with_columns(
+            to_embed=pl.concat_str(
+                [pl.col(col) for col in step.cols],
+                separator="",
+            )
+        )
+        .with_columns(
+            pl.col("to_embed")
+            .map_batches(
+                embed_batch,
+                return_dtype=pl.Array(
+                    pl.Float32, width=embedder.output_dim
+                ),
+            )
+            .alias(f"{'_'.join(step.cols)}_embedding")
+        )
+        .drop("to_embed")
+    )
+
+
+HANDLERS: dict[type[PipelineStep], Callable[..., pl.LazyFrame]] = {
+    CleanStep: run_clean,
+    DropNaStep: _run_drop_na,
+    TokeniseStep: _run_tokenise,
+    EmbedStep: _run_embed,
+}
 
 
 def _measure_lf(lf: pl.LazyFrame, run: bool = False) -> float:
@@ -147,23 +241,11 @@ def run_preprocess_pipeline(job: PreprocessJob, runtime: Runtime) -> DataSource:
     if job.dry_run:
         lf_whole = lf_whole.slice(0, 500)
 
+    embed_step = next((s for s in job.steps if isinstance(s, EmbedStep)), None)
     embedder_instance: TextEmbedder | None = None
-    embedder_bos_token: str | None = None
-    embedder_eos_token: str | None = None
-    if job.embedder_key:
+    if embed_step is not None:
         embedder_instance = runtime.get_embedder(
-            key=job.embedder_key, **job.embedder_kwargs
-        )
-        embedder_bos_token = EMBEDDERS[job.embedder_key].bos_token
-        embedder_eos_token = EMBEDDERS[job.embedder_key].eos_token
-
-    def embed_batch(series: pl.Series, **kwargs: Any) -> pl.Series:
-        assert embedder_instance is not None
-        texts = [t if isinstance(t, str) else "" for t in series.to_list()]
-        vectors = embedder_instance.encode(texts)
-        return pl.Series(
-            vectors,
-            dtype=pl.Array(pl.Float32, width=embedder_instance.output_dim),
+            key=embed_step.embedder_key, **embed_step.embedder_kwargs
         )
 
     for i in range(n_partitions):
@@ -179,62 +261,21 @@ def run_preprocess_pipeline(job: PreprocessJob, runtime: Runtime) -> DataSource:
                 .alias(col)
             )
 
-        if job.clean_cols:
-            for col, level, min_len in zip(
-                job.clean_cols, job.clean_levels, job.clean_min_len
-            ):
-                l1 = _measure_lf(lf)
-                lf = clean_step(lf=lf, col=col, min_len=min_len, level=level)
-                l2 = _measure_lf(lf)
-                logger.info(f"Dropped {l1 - l2:,.0f} in {col} at clean lvl {level}")
-        elif i == 0:
-            logger.warning("No cols selected for cleaning")
-
-        if job.drop_na_cols:
-            for col in job.drop_na_cols:
-                lf = lf.drop_nulls(subset=col)
-        elif i == 0:
-            logger.warning("No columns set to drop nulls")
-
-        if embedder_instance:
-            if i == 0:
-                logger.info(
-                    f"Embedding {', '.join(job.embed_cols)} with {job.embedder_key}"
-                )
-            lf = (
-                lf.drop_nulls(job.embed_cols)
-                .with_columns(
-                    [pl.lit(embedder_bos_token) + pl.col(col) + pl.lit(embedder_eos_token) for col in job.embed_cols]
-                    )
-                .with_columns(
-                    to_embed=pl.concat_str(
-                        [pl.col(col) for col in job.embed_cols],
-                        separator="",
-                    )
-                )
-                .with_columns(
-                    pl.col("to_embed")
-                    .map_batches(
-                        embed_batch,
-                        return_dtype=pl.Array(
-                            pl.Float32, width=embedder_instance.output_dim
-                        ),
-                    )
-                    .alias(f"{'_'.join(job.embed_cols)}_embedding")
-                )
-                .drop("to_embed")
-            )
-
-        if job.tokeniser:
-            if i == 0:
-                logger.info(
-                    f"Tokenising {', '.join(job.tokenise_cols)} with {job.tokeniser}"
-                )
-            lf = tokenise_step(
-                lf=lf,
-                tokeniser_path=job.tokeniser,
-                columns=job.tokenise_cols,
-            )
+        ctx = StepContext(
+            runtime=runtime,
+            embedder=embedder_instance,
+            partition_index=i,
+            logger=logger,
+        )
+        for step in job.steps:
+            rows_before = _measure_lf(lf, True)
+            lf = HANDLERS[type(step)](lf, step, ctx)
+            rows_after = _measure_lf(lf, True)
+            delta = f"{type(step).__name__} row delta {rows_after - rows_before:,.0f}"
+            if isinstance(step, (CleanStep, DropNaStep)):
+                logger.info(delta)
+            else:
+                logger.debug(delta)
 
         if job.dry_run:
             print(lf.collect())
@@ -256,10 +297,11 @@ def run_preprocess_pipeline(job: PreprocessJob, runtime: Runtime) -> DataSource:
         )
         progress_bar.update(progress, advance=n_written)
 
-    metadata = {k: str(v) for k, v in job.params.items()}
+    metadata: dict[str, Any] = {k: str(v) for k, v in job.params.items()}
     metadata["runtime"] = job.runtime_name
-    metadata["embedder"] = job.embedder_key
-    metadata["embedder_kwargs"] = job.embedder_kwargs
+    if embed_step is not None:
+        metadata["embedder"] = embed_step.embedder_key
+        metadata["embedder_kwargs"] = embed_step.embedder_kwargs
     with open(destination_path / "metadata.json", "w") as f:
         json.dump(metadata, f)
 

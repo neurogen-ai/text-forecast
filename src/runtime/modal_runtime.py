@@ -250,9 +250,8 @@ def run_preprocess_remote(job: PreprocessJob) -> DataSource:
         getattr(job.destination, "name", job.destination),
     )
     logger.debug(
-        "run_preprocess_remote: embedder_key=%r embed_cols=%r",
-        job.embedder_key,
-        job.embed_cols,
+        "run_preprocess_remote: step tags=%r",
+        [getattr(s, "tag", type(s).__name__) for s in job.steps],
     )
     result = run_preprocess_pipeline(job, _in_container_runtime())
     logger.info("run_preprocess_remote: preprocess job completed")

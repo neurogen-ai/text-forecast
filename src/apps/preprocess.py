@@ -17,6 +17,13 @@ from apps.source_args import (
 )
 from config.env import Env, load_env
 from data.preprocess.pipeline import PreprocessJob
+from data.preprocess.steps import (
+    CleanStep,
+    DropNaStep,
+    EmbedStep,
+    LengthTrim,
+    TokeniseStep,
+)
 from data.sources import LocalSourceBackend, SourceBackend
 from data.sources.base import DataSource
 from runtime import build_runtime
@@ -288,24 +295,47 @@ def main(
     if embedder_batch_size:
         embedder_kwargs["batch_size"] = embedder_batch_size
 
+    # Interim bridge (plan 2.1 T2): old CLI flags mapped onto declarative
+    # steps. T4b rebuilds this CLI properly.
+    steps: list[CleanStep | TokeniseStep | EmbedStep | DropNaStep] = []
+    for col, level, min_len in zip(clean_cols, clean_levels, clean_min_len):
+        steps.append(
+            CleanStep(
+                col=col,
+                lowercase=level > 1,
+                trim=(
+                    LengthTrim(min_chars=min_len, max_sigma=3.0)
+                    if level >= 3
+                    else None
+                ),
+                require_terminal_period=level > 4,
+            )
+        )
+    if tokeniser and tokenise_cols:
+        steps.append(
+            TokeniseStep(tokeniser=tokeniser, cols=tuple(tokenise_cols))
+        )
+    if embedder and embed_cols:
+        steps.append(
+            EmbedStep(
+                embedder_key=embedder,
+                embedder_kwargs=dict(embedder_kwargs),
+                cols=tuple(embed_cols),
+            )
+        )
+    if drop_na_cols:
+        steps.append(DropNaStep(cols=tuple(drop_na_cols)))
+
     job = PreprocessJob(
         origin=origin_source,
         destination=destination,
-        clean_cols=clean_cols,
-        clean_levels=clean_levels,
-        clean_min_len=clean_min_len,
-        tokeniser=tokeniser,
-        tokenise_cols=tokenise_cols,
-        embedder_key=embedder,
-        embedder_kwargs=embedder_kwargs,
-        embed_cols=embed_cols,
+        steps=steps,
         n_partitions=n_partitions,
         rows_per_part=rows_per_part,
         compression_level=compression_level,
         start_date=start_date,
         end_date=end_date,
         field_id=field_id,
-        drop_na_cols=drop_na_cols,
         languages=languages,
         types=types,
         filt_license=filt_license,
