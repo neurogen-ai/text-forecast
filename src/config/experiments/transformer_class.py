@@ -27,7 +27,7 @@ from data.datasets.text_token_dataset import (
     token_batch_collate,
 )
 from data.datasets.types import TokenBatch
-from data.sources import SourceBackend
+from data.sources import build_default_source_backend
 from models import TransformerClass
 from training.checkpointing import MlflowCheckpointProcessor
 from training.losses import BinaryCrossEntropyLoss
@@ -53,14 +53,15 @@ _EPOCHS = 8
 def build(
     runtime: RunContext,
     env: Env,
-    source_backend: SourceBackend,
 ) -> Experiment[TokenBatch]:
     """Build the basic Transformer classifier experiment."""
     device = runtime.device
     dtype = runtime.dtype
     subsample = runtime.subsample
 
-    source = source_backend.get_source(_SOURCE_NAME)
+    source = build_default_source_backend(env).get_source(
+        _SOURCE_NAME
+    )
 
     # Keep only rows with a non-null citation count.
     filter_expr = pl.col(_Y_COL) >= 0

@@ -13,7 +13,7 @@ A valid experiment module must define two module-level names (enforced by
 `config.loader.load_experiment`):
 
 - `experiment_name: str` - the MLflow experiment name
-- `build(runtime, env, source_backend) -> Experiment` - constructs and returns
+- `build(runtime, env) -> Experiment` - constructs and returns
   the object graph
 
 The file name (without `.py`) is what you pass to `--experiment` or set as
@@ -39,8 +39,11 @@ Runtime concerns stay out of the module where possible. `build()` receives:
 - `RunContext` - `device`, `dtype`, `compile_mode`, `fullgraph`,
   `subsample` (from `--subsample`; thread it into dataset configs so dry runs
   actually shrink)
-- `Env` - tracking URI, artifact location
-- `SourceBackend` - call `get_source(name)` to get datasets
+- `Env` - tracking URI, artifact location, and source config
+
+Dataset location is machine-level and arrives through `env.source`. Call
+`build_default_source_backend(env).get_source(name)` to resolve a staged
+dataset by name; the dataset *name* itself stays in the experiment file.
 
 ## Writing an experiment
 
@@ -71,11 +74,11 @@ Start from `transformer_class.py` or `graph_embed_class.py`. The usual shape:
 ```python
 experiment_name: str = "My-experiment-v1"
 
-def build(runtime, env, source_backend):
+def build(runtime, env):
     device, dtype = runtime.device, runtime.dtype
     subsample = runtime.subsample
 
-    source = source_backend.get_source(_SOURCE_NAME)
+    source = build_default_source_backend(env).get_source(_SOURCE_NAME)
     train_ds = TextTokenDataset(config=train_config, source=source)  # t_end 1990
     val_ds = TextTokenDataset(config=val_config, source=source)      # 1990-1991
 

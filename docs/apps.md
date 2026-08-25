@@ -11,12 +11,16 @@ The root command resolves the experiment name from `--experiment` or
 
 ## Shared options (`source_args.py`)
 
-Every app accepts the same source/env flags:
+The data-pipeline apps (preprocess, describe, engineer) accept source/env flags:
 
 - `--source-backend` - `local` (default) or `modal`; defaults to `[source].default`
 - `--source-opt key=value` - backend option overrides, repeatable; dotted keys nest
 - `--source-base-dir` / `--source-volume` - shortcuts for local/modal backends
 - `--tracking-uri`, `--artifact-loc` - override MLflow settings from env
+
+`train` and `eval` do not take source flags. Experiments resolve their dataset
+location from `env.source` (`[source].default` plus its config section), so
+dataset identity lives in the experiment file and location in the environment.
 
 ## preprocess
 
@@ -65,8 +69,8 @@ runs one eval epoch through the Engine, exports predictions to
 `<base_dir>/eval/<run_id>/run-<prefix>/<year>`, and logs metrics to MLflow under
 `<experiment>-EVAL`. The experiment file is downloaded from the checkpoint
 store, so the exact training config is reproduced without CLI re-specification.
-Local-only: requires `--source-backend local`. `--no-gpu` forces CPU;
-`--clean-up` deletes temp checkpoints afterwards.
+Predictions are written under the local source base dir (`[source.local].base_dir`).
+`--no-gpu` forces CPU; `--clean-up` deletes temp checkpoints afterwards.
 
 ## train
 

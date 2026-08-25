@@ -7,7 +7,6 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from data.sources import SourceBackend
 from utils.get_root_dir import get_root_dir
 
 from .env import Env
@@ -64,7 +63,6 @@ def load_experiment(
     runtime: RunContext,
     *,
     env: Env,
-    source_backend: SourceBackend,
 ) -> Experiment[Any]:
     """Import an experiment module and call its ``build`` entry point."""
     module_path = _EXPERIMENTS_DIR / f"{name}.py"
@@ -84,10 +82,10 @@ def load_experiment(
         )
     if not callable(build):
         raise ValueError(
-            f"Experiment {name!r} must define a callable 'build(runtime, env, source_backend)'"
+            f"Experiment {name!r} must define a callable 'build(runtime, env)'"
         )
 
-    experiment = build(runtime, env, source_backend)
+    experiment = build(runtime, env)
     if not isinstance(experiment, Experiment):
         raise ValueError(
             f"Experiment {name!r}.build() must return an Experiment instance"
@@ -100,7 +98,6 @@ def load_experiment_from_path(
     runtime: RunContext,
     *,
     env: Env,
-    source_backend: SourceBackend,
 ) -> Experiment[Any]:
     """Load an experiment module from an arbitrary path (used by eval's
     downloaded experiment-file artifact).
@@ -118,10 +115,10 @@ def load_experiment_from_path(
         raise ValueError("Experiment file must declare a string 'experiment_name'")
     if not callable(build):
         raise ValueError(
-            "Experiment file must define a callable 'build(runtime, env, source_backend)'"
+            "Experiment file must define a callable 'build(runtime, env)'"
         )
 
-    experiment = build(runtime, env, source_backend)
+    experiment = build(runtime, env)
     if not isinstance(experiment, Experiment):
         raise ValueError("Experiment file build() must return an Experiment instance")
     return experiment

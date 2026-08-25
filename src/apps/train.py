@@ -10,13 +10,6 @@ import mlflow
 import torch
 import typer
 
-from apps.source_args import (
-    build_source_backend_from_cli,
-    source_backend_arg,
-    source_base_dir_arg,
-    source_opt_arg,
-    source_volume_arg,
-)
 from builders import build_progress_bars
 from config.env import load_env
 from config.loader import load_experiment
@@ -117,10 +110,6 @@ def main(
         "--model-only",
         help="Load only model weights on resume (skip optimizer/scheduler)",
     ),
-    source_backend: str | None = source_backend_arg(),
-    source_opts: list[str] = source_opt_arg(),
-    source_base_dir: Path | None = source_base_dir_arg(),
-    source_volume: str | None = source_volume_arg(),
     tracking_uri: str | None = typer.Option(
         None,
         "--tracking-uri",
@@ -161,14 +150,6 @@ def main(
         }
     )
 
-    source_backend_obj = build_source_backend_from_cli(
-        env=env,
-        source_backend=source_backend,
-        source_opts=source_opts,
-        source_base_dir=source_base_dir,
-        source_volume=source_volume,
-    )
-
     runtime = RunContext(
         device=device,
         dtype=torch.float32,
@@ -179,9 +160,7 @@ def main(
 
     root_obj = ctx.find_root().obj
     experiment_name: str = root_obj["experiment_name"]
-    exp = load_experiment(
-        experiment_name, runtime, env=env, source_backend=source_backend_obj
-    )
+    exp = load_experiment(experiment_name, runtime, env=env)
 
     if runtime.compile_mode:
         exp.model.compile(
