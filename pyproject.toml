@@ -12,7 +12,7 @@ citef = "main:app"
 name = 'citation-forecast'
 description = 'Forecast academic impact (citation count/percentile) with NLP'
 
-version = '1.2.1'
+version = '2.0.0'
 requires-python = '>=3.12'
 
 readme = "README.md"
