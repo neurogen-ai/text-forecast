@@ -15,7 +15,7 @@ contract change.
 | Plan | Title | Status |
 |------|-------|--------|
 | [2.1](2.1.md) | Clean pipeline refactor: ordered step specs, per-column intensity controls, nested CLI | implemented (T0–T5); pending one manual `--runtime modal` dry run |
-| [2.2](2.2.md) | Modal runtime tidy-up: dedupe config/log noise, inline wrappers, single-source EVAL naming | drafted, not started |
+| [2.2](2.2.md) | Modal runtime tidy-up: dedupe config/log noise, inline wrappers, single-source EVAL naming | drafted; [implementation plan](implementation/v2.2/README.md) written (branches A–F), not started |
 | [2.3](2.3.md) | Production deployment hardening | not started |
 | [2.4](2.4.md) | Distributed GPU training/eval | not started |
 | [2.5](2.5.md) | Remote progress tracking for cloud runs | reconstructed after file loss; review before executing |
