@@ -1,6 +1,6 @@
-# Plan 2.2 implementation — Modal runtime tidy-up
+# Plan 2.3 implementation — Modal runtime tidy-up
 
-Implements `plans/2.2.md`. Refined against the code as of plan 2.1 T5
+Implements `plans/2.3.md`. Refined against the code as of plan 2.1 T5
 (commit `4a268ed`). One file per branch in this directory; each step fits one
 context window and lands as one commit.
 
@@ -23,12 +23,12 @@ assert sites are elsewhere (listed in branch D).
 `tests/test_modal_config.py`, `tests/test_eval_naming.py` (new),
 `tests/test_preprocess_job.py`, `docs/apps.md`.
 
-**Depends on documents:** `plans/2.2.md` (the spec),
+**Depends on documents:** `plans/2.3.md` (the spec),
 `plans/2.1-implementation.md` (context for what 2.1 already changed),
 `docs/apps.md` (Modal dispatch and `[runtime.modal]` docs),
 `docs/training.md` (eval flow).
 
-## Deviations from plans/2.2.md found during inspection
+## Deviations from plans/2.3.md found during inspection
 
 The implementing agent does not need to reconcile these; they are already
 reflected in the branch files.
@@ -36,12 +36,12 @@ reflected in the branch files.
 1. The EVAL fallback is computed in **three** places, not two:
    `ModalRuntime.run_eval`, `LocalRuntime.run_eval`, and
    `run_eval_pipeline`. Branch C single-sources all three.
-2. The assert sites named in 2.2 §1.5 moved with 2.1. The live assert sites
+2. The assert sites named in 2.3 §1.5 moved with 2.1. The live assert sites
    are `apps/train.py` (3), `apps/eval.py` (6), `apps/engineer.py` (1),
    `training/pipeline/_common.py::build_run_context` (1),
    `training/pipeline/eval.py::_validate` (2), and an internal invariant in
    `data/preprocess/pipeline.py::_run_embed` (1).
-3. The `POLARS_MAX_THREADS` question from 2.2 §2.6 is settled: setting the
+3. The `POLARS_MAX_THREADS` question from 2.3 §2.6 is settled: setting the
    variable after polars import has no effect (verified against the project
    venv pin; thread pool is sized at import). Branch E deletes the dead
    line, the `max_threads` job field, and the CLI flag.
@@ -96,7 +96,7 @@ main ──┬── A  chore/modal-runtime-tidy        logging cut + wrapper in
             (D and E both touch data/preprocess/pipeline.py in different
              hunks; whoever lands second rebases)
 
-       F  docs/v2.2-closeout               [after A–E all merged]
+       F  docs/v2.3-closeout               [after A–E all merged]
 ```
 
 - **Bottleneck:** A blocks B and C (same file). Nothing else blocks anything.
@@ -112,7 +112,7 @@ main ──┬── A  chore/modal-runtime-tidy        logging cut + wrapper in
 | C | `test(eval): pin eval experiment naming`; `refactor(eval): single-source -EVAL naming via eval_experiment_name` |
 | D | `refactor(pipeline): explicit raises in train/eval pipelines`; `fix(cli): replace asserts with BadParameter in apps` |
 | E | `chore(preprocess): remove dead POLARS_MAX_THREADS plumbing` |
-| F | `docs: verify apps/training docs against 2.2 reality; mark plan implemented` |
+| F | `docs: verify apps/training docs against 2.3 reality; mark plan implemented` |
 
 ## Abstractions introduced, and what each absorbs
 

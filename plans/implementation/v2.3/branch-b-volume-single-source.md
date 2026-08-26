@@ -2,7 +2,7 @@
 
 Deletes the hardcoded volume-label constants in
 `src/runtime/modal_runtime.py` and reads every label from
-`[runtime.modal]` via `modal_runtime_config`. Spec: `plans/2.2.md` §2.3.
+`[runtime.modal]` via `modal_runtime_config`. Spec: `plans/2.3.md` §2.3.
 Depends on branch A (same file). Parallel with C, D, E once A lands.
 
 ## Step B1 — Import-time config boundary replaces the constants

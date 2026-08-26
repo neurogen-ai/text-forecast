@@ -1,7 +1,7 @@
 # Branch D — `refactor/asserts-to-raises`
 
 Converts every input-validation `assert` in `src/` to explicit raises with
-the identical message text. Spec: `plans/2.2.md` §2.5, updated for the sites
+the identical message text. Spec: `plans/2.3.md` §2.5, updated for the sites
 that exist after plan 2.1 (`apps/preprocess.py` is already assert-free).
 Depends on nothing; parallel with A, B, C, E.
 

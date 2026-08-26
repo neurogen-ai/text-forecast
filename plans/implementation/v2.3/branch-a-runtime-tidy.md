@@ -1,7 +1,7 @@
 # Branch A — `chore/modal-runtime-tidy`
 
 Cuts `src/runtime/modal_runtime.py` from 33 logger calls to 11 and deletes
-the trivial wrappers. No logic change. Spec: `plans/2.2.md` §2.1, §2.2.
+the trivial wrappers. No logic change. Spec: `plans/2.3.md` §2.1, §2.3.
 Depends on nothing; blocks branches B and C (same file).
 
 ## Step A1 — Logging cut to dispatch boundaries

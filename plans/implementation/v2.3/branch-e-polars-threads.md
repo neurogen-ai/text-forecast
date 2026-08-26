@@ -1,6 +1,6 @@
 # Branch E — `chore/drop-dead-polars-threads`
 
-Removes the dead `POLARS_MAX_THREADS` plumbing. The question 2.2 §2.6 left
+Removes the dead `POLARS_MAX_THREADS` plumbing. The question 2.3 §2.6 left
 open is settled: polars sizes its thread pool at import, so setting the env
 var inside `run_preprocess_pipeline` does nothing (verified against the
 project venv pin: `pl.thread_pool_size()` stays unchanged after the set).
@@ -16,7 +16,7 @@ Depends on nothing; parallel with A, B, C, D.
 - `PreprocessJob` loses the field `max_threads: int = 8`
   (`src/data/preprocess/pipeline.py`). This is a job-serialisation format
   change: jobs pickled before this commit fail to unpickle afterwards.
-  Acceptable by plan 2.2's own terms ("no behaviour that matters"); note it
+  Acceptable by plan 2.3's own terms ("no behaviour that matters"); note it
   in the commit message. There are no persisted queues; jobs live for one
   dispatch.
 - `run_preprocess_pipeline` loses its first line

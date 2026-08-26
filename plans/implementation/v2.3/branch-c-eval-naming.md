@@ -1,7 +1,7 @@
 # Branch C — `refactor/eval-naming-helper`
 
 Single-sources the eval MLflow experiment naming into one helper and calls
-it from all three current sites. Spec: `plans/2.2.md` §2.4, extended to cover
+it from all three current sites. Spec: `plans/2.3.md` §2.4, extended to cover
 `LocalRuntime` (found during inspection). Depends on branch A (edits
 `runtime/modal_runtime.py`). Parallel with B, D, E once A lands.
 
