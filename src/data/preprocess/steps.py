@@ -7,11 +7,9 @@ operations, plus serialisation helpers. No consumer logic lives here.
 from __future__ import annotations
 
 import dataclasses
+import logging
 from dataclasses import asdict, dataclass, field, fields
-from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_type_hints
-
-if TYPE_CHECKING:
-    import logging
+from typing import Any, Literal, Union, cast, get_type_hints
 
 __all__ = [
     "CleanStep",
