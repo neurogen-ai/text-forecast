@@ -8,6 +8,7 @@ from .h_hr import H_HR
 from .h_r_smooth import H_R_Smooth
 from .hr_ahead_binary import HR_AHEAD_BINARY
 from .hr_rhead import HR_RHEAD_BINARY
+from .retrieval_forecast import RetrievalForecast
 from .transformerClass import TransformerClass
 from .transformerLM import TransformerLM
 
@@ -21,6 +22,7 @@ __all__ = [
     "H_R_Smooth",
     "HR_AHEAD_BINARY",
     "HR_RHEAD_BINARY",
+    "RetrievalForecast",
     "TransformerClass",
     "TransformerLM",
 ]
