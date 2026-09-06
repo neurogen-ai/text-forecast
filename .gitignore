@@ -12,6 +12,7 @@ setup.py
 *.obj
 
 # Other
+.handoff
 src/models/trace.json
 *config.toml
 !plans/README.md

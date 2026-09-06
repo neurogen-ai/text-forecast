@@ -1,6 +1,4 @@
 {
-  "venvPath": "/home/fnoble/.conda/envs",
-  "venv": "NLP",
 
   "include": ["src"],
 
