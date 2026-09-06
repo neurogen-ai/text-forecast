@@ -18,6 +18,12 @@ Covers:
   forward output equals the hard gather exactly (no soft contamination),
   the k hard picks are distinct, and the autograd gradient through the ST
   path matches a hand-derived gradient on a tiny fixture,
+- the v2.4.0 ``candidate_strategy`` pool selection (random = seeded
+  Gumbel-perturbed top-k, mixed = one nearest-majority pool with a fixed
+  random minority): pool purity holds under random/mixed, pools are a
+  pure function of (batch ids, corpus state), the nearest path is
+  byte-identical to the pre-2.4 behaviour, and the no-dates path ignores
+  the strategy,
 - ``return_date=True`` plumbing through ``RetrievalDataset`` and
   ``token_batch_collate``,
 - the ``RetrievalForecast`` dim guard and end-to-end gradient flow with the
@@ -320,6 +326,276 @@ def test_stage1_pool_excludes_disallowed_rows(tmp_path: Path) -> None:
     assert (store.dates[idx.reshape(-1)] <= cutoff).all(), (
         "every pool row must satisfy the example's delta cutoff"
     )
+
+
+def _all_eligible_date(store: VectorStoreDataset) -> torch.Tensor:
+    """An example date making every store row delta-eligible (no ladder)."""
+    assert store.dates is not None
+    return torch.tensor([store.dates.max().item() + 400.0])
+
+
+def test_random_pool_excludes_disallowed_rows(tmp_path: Path) -> None:
+    """Pool purity under candidate_strategy='random': the Gumbel-perturbed
+    topk keeps every masked slot at -inf, so the pool still shrinks to the
+    eligible count and never contains a too-recent row."""
+    _write_store_parquet(path := tmp_path / "store")
+    store = _store(path)
+    retriever = VectorRetriever(
+        store.db, _TOP_K, None, torch.device("cpu"),
+        dates=store.dates, delta_years=1.0, candidate_strategy="random",
+    )
+
+    # Same fixture as test_stage1_pool_excludes_disallowed_rows: exactly 5
+    # eligible rows, below n_candidates=8 but above top_k=4.
+    example_dates = torch.tensor([store.dates.min().item() + 750.0])
+    cutoff = example_dates[0] - 365.25
+    n_eligible = int((store.dates <= cutoff).sum())
+    assert n_eligible == 5, "fixture must yield exactly 5 eligible rows"
+
+    q = torch.nn.functional.normalize(
+        torch.randn(1, 2, DIM, generator=torch.Generator().manual_seed(16)),
+        dim=-1,
+    )
+    idx = retriever.search(q, 8, example_dates, ids=torch.tensor([7.0]))
+
+    assert idx.shape == (1, 2, 5), "pool must shrink to the eligible count"
+    assert (store.dates[idx.reshape(-1)] <= cutoff).all(), (
+        "random pools must satisfy the example's delta cutoff"
+    )
+
+
+def test_random_pool_is_a_pure_function_of_ids(tmp_path: Path) -> None:
+    """Determinism: same batch ids + same corpus -> identical pool, across
+    repeat calls and across retriever instances (the Gumbel generator is
+    folded from the ids, not from global RNG state, so a resumed run whose
+    checkpoint carries no RNG state still reproduces the same pools)."""
+    _write_store_parquet(path := tmp_path / "store")
+    store = _store(path)
+    kwargs = dict(
+        db=store.db, top_k=_TOP_K, store_search=None,
+        device=torch.device("cpu"), dates=store.dates, delta_years=1.0,
+        candidate_strategy="random",
+    )
+    r1 = VectorRetriever(**kwargs)  # type: ignore[arg-type]
+    r2 = VectorRetriever(**kwargs)  # type: ignore[arg-type]
+
+    q = torch.nn.functional.normalize(
+        torch.randn(3, 2, DIM, generator=torch.Generator().manual_seed(17)),
+        dim=-1,
+    )
+    dates = _all_eligible_date(store).expand(3)
+    ids = torch.tensor([3.0, 11.0, 42.0])
+    assert torch.equal(r1.search(q, 8, dates, ids), r1.search(q, 8, dates, ids))
+    assert torch.equal(r1.search(q, 8, dates, ids), r2.search(q, 8, dates, ids))
+
+
+def test_random_pool_varies_with_ids(tmp_path: Path) -> None:
+    """Different batch ids -> (probabilistically) different random pools.
+    With 24 eligible rows and a pool of 8, two independent Gumbel draws
+    colliding on the whole pool is vanishingly unlikely."""
+    _write_store_parquet(path := tmp_path / "store")
+    store = _store(path)
+    retriever = VectorRetriever(
+        store.db, _TOP_K, None, torch.device("cpu"),
+        dates=store.dates, delta_years=1.0, candidate_strategy="random",
+    )
+    q = torch.nn.functional.normalize(
+        torch.randn(1, 2, DIM, generator=torch.Generator().manual_seed(18)),
+        dim=-1,
+    )
+    dates = _all_eligible_date(store)
+    idx_a = retriever.search(q, 8, dates, ids=torch.tensor([1.0]))
+    idx_b = retriever.search(q, 8, dates, ids=torch.tensor([2.0]))
+    assert not torch.equal(idx_a, idx_b), (
+        "different batch ids must (probabilistically) change the pool"
+    )
+    # ...but stay valid pools over the same corpus.
+    for idx in (idx_a, idx_b):
+        assert bool(((idx >= 0) & (idx < store.db.size(0))).all())
+
+
+def test_mixed_pool_composition_at_fixed_ratio(tmp_path: Path) -> None:
+    """AD4: 'mixed' is ONE pool of width n_candidates - the 1-ratio nearest
+    majority plus a random minority drawn outside the nearest set, at the
+    single fixed MIXED_RANDOM_RATIO (no knob)."""
+    from models.retrieval_forecast import MIXED_RANDOM_RATIO
+
+    _write_store_parquet(path := tmp_path / "store")
+    store = _store(path)
+    nearest_r = VectorRetriever(
+        store.db, _TOP_K, None, torch.device("cpu"),
+        dates=store.dates, delta_years=1.0,
+    )
+    mixed_r = VectorRetriever(
+        store.db, _TOP_K, None, torch.device("cpu"),
+        dates=store.dates, delta_years=1.0, candidate_strategy="mixed",
+    )
+
+    n_cand = 8
+    q = torch.nn.functional.normalize(
+        torch.randn(1, 2, DIM, generator=torch.Generator().manual_seed(19)),
+        dim=-1,
+    )
+    dates = _all_eligible_date(store)
+    ids = torch.tensor([5.0])
+    nearest_idx = nearest_r.search(q, n_cand, dates)  # (1, 2, 8)
+    mixed_idx = mixed_r.search(q, n_cand, dates, ids=ids)  # (1, 2, 8)
+
+    n_rand = int(n_cand * MIXED_RANDOM_RATIO)  # 2 of 8
+    n_nearest = n_cand - n_rand  # 6 of 8
+    for row in range(mixed_idx.size(1)):
+        mixed_set = set(mixed_idx[0, row].tolist())
+        majority = set(nearest_idx[0, row][:n_nearest].tolist())
+        # The nearest majority of the mixed pool is exactly the top-6
+        # nearest rows; the minority sits outside it (fill excludes it).
+        assert majority <= mixed_set
+        minority = mixed_set - majority
+        assert len(minority) == n_rand
+        assert not (minority & majority)
+    # Every mixed row is eligible.
+    cutoff = dates[0] - 365.25
+    assert (store.dates[mixed_idx.reshape(-1)] <= cutoff).all()
+
+
+def test_mixed_degrades_to_nearest_when_pool_equals_topk(tmp_path: Path) -> None:
+    """With no room above top_k the mixed minority is 0 and the pool is
+    exactly the nearest pool (the ST loop still has its top_k rows)."""
+    _write_store_parquet(path := tmp_path / "store")
+    store = _store(path)
+    nearest_r = VectorRetriever(
+        store.db, _TOP_K, None, torch.device("cpu"),
+        dates=store.dates, delta_years=1.0,
+    )
+    mixed_r = VectorRetriever(
+        store.db, _TOP_K, None, torch.device("cpu"),
+        dates=store.dates, delta_years=1.0, candidate_strategy="mixed",
+    )
+    q = torch.nn.functional.normalize(
+        torch.randn(1, 1, DIM, generator=torch.Generator().manual_seed(20)),
+        dim=-1,
+    )
+    dates = _all_eligible_date(store)
+    ids = torch.tensor([9.0])
+    assert torch.equal(
+        mixed_r.search(q, _TOP_K, dates, ids=ids),
+        nearest_r.search(q, _TOP_K, dates),
+    )
+
+
+def test_nearest_path_is_byte_identical_with_ids(tmp_path: Path) -> None:
+    """AD2: the default 'nearest' strategy is unchanged - passing example
+    ids must not alter the pre-2.4 masked top-k at all."""
+    _write_store_parquet(path := tmp_path / "store")
+    store = _store(path)
+    retriever = VectorRetriever(
+        store.db, _TOP_K, None, torch.device("cpu"),
+        dates=store.dates, delta_years=1.0,
+    )
+    q = torch.nn.functional.normalize(
+        torch.randn(2, 2, DIM, generator=torch.Generator().manual_seed(21)),
+        dim=-1,
+    )
+    example_dates = torch.tensor([
+        store.dates.min().item() + 750.0,
+        store.dates.max().item() + 400.0,
+    ])
+    with_ids = retriever.search(q, 8, example_dates, ids=torch.tensor([1.0, 2.0]))
+    without_ids = retriever.search(q, 8, example_dates)
+    assert torch.equal(with_ids, without_ids)
+
+
+def test_random_and_mixed_require_ids(tmp_path: Path) -> None:
+    """The Gumbel seed is folded from the batch ids; random/mixed without
+    ids cannot be reproducible, so they raise instead of silently degrading."""
+    _write_store_parquet(path := tmp_path / "store")
+    store = _store(path)
+    for strategy in ("random", "mixed"):
+        retriever = VectorRetriever(
+            store.db, _TOP_K, None, torch.device("cpu"),
+            dates=store.dates, delta_years=1.0, candidate_strategy=strategy,
+        )
+        q = torch.randn(1, 1, DIM)
+        with pytest.raises(ValueError, match="example ids"):
+            retriever.search(q, _TOP_K, _all_eligible_date(store))
+
+
+def test_no_dates_path_ignores_strategy(tmp_path: Path) -> None:
+    """Strategy scope (AD1): without per-example dates there is no masked
+    score matrix to perturb, so random/mixed fall back to the exact nearest
+    top-k (warned once)."""
+    _write_store_parquet(path := tmp_path / "store")
+    store = _store(path)
+    nearest_r = VectorRetriever(
+        store.db, _TOP_K, None, torch.device("cpu"), dates=None,
+    )
+    random_r = VectorRetriever(
+        store.db, _TOP_K, None, torch.device("cpu"), dates=None,
+        candidate_strategy="random",
+    )
+    q = torch.nn.functional.normalize(
+        torch.randn(2, 1, DIM, generator=torch.Generator().manual_seed(22)),
+        dim=-1,
+    )
+    assert torch.equal(
+        random_r.search(q, _TOP_K, None, ids=torch.tensor([1.0, 2.0])),
+        nearest_r.search(q, _TOP_K, None),
+    )
+
+
+def test_candidate_strategy_config_validation() -> None:
+    """AD5: only nearest/random/mixed are valid config values - there is no
+    'furthest' strategy to opt into."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="candidate_strategy"):
+        RetrievalModelConfig(
+            n_heads=2, n_layers=1, vocab_size=64, embed_dim=16, hidden_dim=32,
+            n_out=1, dropout=0.0, n_queries=2, top_k=2, max_len=8,
+            candidate_strategy="furthest",
+        )
+    # Default is nearest (AD2).
+    cfg = RetrievalModelConfig(
+        n_heads=2, n_layers=1, vocab_size=64, embed_dim=16, hidden_dim=32,
+        n_out=1, dropout=0.0, n_queries=2, top_k=2, max_len=8,
+    )
+    assert cfg.candidate_strategy == "nearest"
+
+
+def test_st_forward_random_pool_respects_delta_filter() -> None:
+    """The CLaRa ST loop composes with random/mixed pools: the forward hard
+    picks still come from the (perturbed) pool, stay inside the example's
+    eligible rows, and gradients still reach the embedder."""
+    torch.manual_seed(23)
+    db = torch.nn.functional.normalize(
+        torch.randn(24, DIM, generator=torch.Generator().manual_seed(24)), dim=-1
+    )
+    db_dates = torch.arange(24, dtype=torch.float32) * 90.0
+    for strategy in ("random", "mixed"):
+        retriever = VectorRetriever(
+            db, 3, None, torch.device("cpu"), dates=db_dates, delta_years=1.0,
+            candidate_strategy=strategy,
+        )
+        q = torch.nn.functional.normalize(
+            torch.randn(2, 2, DIM, generator=torch.Generator().manual_seed(25)),
+            dim=-1,
+        ).requires_grad_(True)
+        example_dates = torch.tensor([
+            db_dates.max().item(), db_dates.max().item() - 300.0
+        ])
+        cutoffs = example_dates - 365.25
+        ids = torch.tensor([3.0, 8.0])
+        selected = retriever(q, 0.07, example_dates, n_candidates=8, ids=ids)
+        assert selected.shape == (2, 2, 3, DIM)
+        for b in range(2):
+            pool_idx = retriever.search(
+                q[b : b + 1], 8, example_dates[b : b + 1], ids=ids[b : b + 1]
+            )
+            pool = retriever.db[pool_idx]  # (1, 2, 8, DIM)
+            for n in range(2):
+                d = (pool[0, n] - selected[b, n].detach()).abs().sum(-1).argmin()
+                assert db_dates[pool_idx[0, n, d]] <= cutoffs[b].item()
+        selected.sum().backward()
+        assert q.grad is not None and bool(torch.isfinite(q.grad).all())
 
 
 def test_delta_filter_requires_store_dates(tmp_path: Path) -> None:
