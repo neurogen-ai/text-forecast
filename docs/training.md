@@ -166,8 +166,7 @@ Subclasses declare which stores they consume via `store_names` and override
 | `RegressionTracker` | plain regression |
 
 Supporting modules: `plot_funcs.py` (curve plots), `calc_metrics.py`,
-`log_lrs.py` (LR logging), `params.py` (scalar param walker and guarded
-MLflow param logging), `param_keys.py` (param key rename table).
+`log_lrs.py` / `log_params.py` (MLflow logging helpers).
 
 ## Callbacks
 

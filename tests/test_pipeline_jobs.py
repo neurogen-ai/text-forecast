@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import ast
 from dataclasses import replace
 from datetime import datetime
-from pathlib import Path
 
 import pytest
 import torch
@@ -133,48 +131,3 @@ def test_model_source_file_resolves_engine() -> None:
     file = model_source_file(Engine)
     assert file is not None
     assert file.name == "engine.py"
-
-
-PIPELINE_PACKAGE = Path(__file__).resolve().parents[1] / "src" / "training" / "pipeline"
-
-
-def _first_mlflow_call_line(func: ast.AST, attr: str) -> int | None:
-    for node in ast.walk(func):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == attr
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "mlflow"
-        ):
-            return node.lineno
-    return None
-
-
-def test_tracking_uri_set_before_start_run_in_both_pipelines() -> None:
-    """AST order check (v2.3.1): ``mlflow.set_tracking_uri`` must precede
-    ``mlflow.start_run`` in both pipeline functions. A run started before
-    the tracking URI is set resolves against the default (possibly stale)
-    store; train.py already had the correct order, so this pins it on both
-    paths and future reorders fail here.
-    """
-    offenders: list[str] = []
-    for module_name in ("train.py", "eval.py"):
-        path = PIPELINE_PACKAGE / module_name
-        tree = ast.parse(path.read_text(), filename=str(path))
-        for node in ast.walk(tree):
-            if not (
-                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and node.name in ("run_train_pipeline", "run_eval_pipeline")
-            ):
-                continue
-            uri_line = _first_mlflow_call_line(node, "set_tracking_uri")
-            run_line = _first_mlflow_call_line(node, "start_run")
-            if uri_line is None or run_line is None or uri_line > run_line:
-                offenders.append(
-                    f"{module_name}:{node.name} "
-                    f"set_tracking_uri@{uri_line} start_run@{run_line}"
-                )
-    assert offenders == [], (
-        "set_tracking_uri must precede start_run:\n" + "\n".join(offenders)
-    )

@@ -186,7 +186,7 @@ class OrdinalRegressionTracker(MetricTracker):
                 step=step,
             )
         except Exception as e:
-            logger.exception("plot rendering failed in calc_metrics")
+            logger.error(e)
 
         if logits.size(0) != y_true.size(0):
             logger.error(
@@ -200,20 +200,20 @@ class OrdinalRegressionTracker(MetricTracker):
             mae = mean_absolute_error(y_true_one_hot, probs.squeeze(-1))
             self.log_metric(f"{prefix}_MAE", mae, n_examples)
         except Exception as e:
-            logger.exception("one-hot encoding failed for confusion matrix in calc_metrics")
+            logger.error(e)
 
         try:
             y_true_one_hot = F.one_hot(y_true, num_classes=probs.shape[-1]).squeeze(1)
             w_loss = wasserstein_loss(probs, y_true_one_hot)
             self.log_metric(f"{prefix}_WassersteinDist", w_loss, n_examples)
         except Exception as e:
-            logger.exception("one-hot encoding failed for entropy metric in calc_metrics")
+            logger.error(e)
 
         try:
             entropy = norm_entropy_loss(probs)
             self.log_metric(f"{prefix}_entropy", entropy.item(), probs.shape[0])
         except Exception as e:
-            logger.exception("entropy metric computation failed in calc_metrics")
+            logger.error(e)
         try:
             roc_auc = roc_auc_score(  # pyright: ignore[reportUnknownVariableType]
                 y_true.squeeze(1).long().numpy(),
@@ -232,7 +232,7 @@ class OrdinalRegressionTracker(MetricTracker):
             for i, score in enumerate(roc_auc_indiv):
                 self.log_metric(f"{prefix}_{i}_ROC_AUC", score, n_examples)  # pyright: ignore[reportArgumentType]
         except Exception as e:
-            logger.exception("roc_auc metric computation failed in calc_metrics")
+            logger.error(e)
 
         try:
             av_prec_score = average_precision_score(
@@ -258,7 +258,7 @@ class OrdinalRegressionTracker(MetricTracker):
             for i, score in enumerate(av_prec_indiv):
                 self.log_metric(f"{prefix}_{i}_PR_AUC", score, n_examples)  # pyright: ignore[reportArgumentType]
         except Exception as e:
-            logger.exception("average precision metric computation failed in calc_metrics")
+            logger.error(e)
         preds = torch.argmax(
             probs,
             dim=1,
@@ -275,7 +275,7 @@ class OrdinalRegressionTracker(MetricTracker):
             for i, score in enumerate(f1_indiv):
                 self.log_metric(f"{prefix}_{i}_F1", score, n_examples)  # pyright: ignore[reportArgumentType]
         except Exception as e:
-            logger.exception("f1 metric computation failed in calc_metrics")
+            logger.error(e)
         try:
             balanced_accuracy = balanced_accuracy_score(y_true, preds)
             self.log_metric(f"{prefix}_w_accuracy", balanced_accuracy, n_examples)  # pyright: ignore[reportArgumentType]
@@ -283,7 +283,7 @@ class OrdinalRegressionTracker(MetricTracker):
             self.log_metric(f"{prefix}_accuracy", acc_score, n_examples)  # pyright: ignore[reportArgumentType]
 
         except Exception as e:
-            logger.exception("balanced accuracy metric computation failed in calc_metrics")
+            logger.error(e)
         try:
             recall = recall_score(
                 y_true.long().numpy(),
@@ -306,7 +306,7 @@ class OrdinalRegressionTracker(MetricTracker):
             for i, score in enumerate(recall_indiv):
                 self.log_metric(f"{prefix}_{i}_recall", score, n_examples)  # pyright: ignore[reportArgumentType]
         except Exception as e:
-            logger.exception("recall metric computation failed in calc_metrics")
+            logger.error(e)
         try:
             precision = precision_score(
                 y_true.long().numpy(),
@@ -330,4 +330,4 @@ class OrdinalRegressionTracker(MetricTracker):
             for i, score in enumerate(precision_indiv):
                 self.log_metric(f"{prefix}_{i}_precision", score, n_examples)  # pyright: ignore[reportArgumentType]
         except Exception as e:
-            logger.exception("precision metric computation failed in calc_metrics")
+            logger.error(e)
