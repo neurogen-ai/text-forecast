@@ -87,7 +87,7 @@ class BinaryClassificationTracker(MetricTracker):
                 save_kwargs={"dpi": 72},
             )
         except Exception as e:
-            logger.error(e)
+            logger.exception("plot rendering failed: targets histogram in _log_plots")
         try:
             fig4 = histplot(f"{prefix}-predictions", preds)
             mlflow.log_figure(
@@ -96,7 +96,7 @@ class BinaryClassificationTracker(MetricTracker):
                 save_kwargs={"dpi": 72},
             )
         except Exception as e:
-            logger.error(e)
+            logger.exception("plot rendering failed: predictions histogram in _log_plots")
         try:
             roc_plot = RocCurveDisplay.from_predictions(y_true, probs)
             mlflow.log_figure(
@@ -105,7 +105,7 @@ class BinaryClassificationTracker(MetricTracker):
                 save_kwargs={"dpi": 72},
             )
         except Exception as e:
-            logger.error(e)
+            logger.exception("plot rendering failed: ROC curve in _log_plots")
 
         try:
             pr_plot = PrecisionRecallDisplay.from_predictions(  # pyright: ignore[reportUnknownMemberType]
@@ -119,7 +119,7 @@ class BinaryClassificationTracker(MetricTracker):
                 save_kwargs={"dpi": 72},
             )
         except Exception as e:
-            logger.error(e)
+            logger.exception("plot rendering failed: precision-recall curve in _log_plots")
 
         # OutPut Probs histogram
         try:
@@ -180,7 +180,7 @@ class BinaryClassificationTracker(MetricTracker):
                 save_kwargs={"dpi": 72},
             )
         except Exception as e:
-            logger.error(str(e))
+            logger.exception("legend proportion computation failed in _log_plots")
 
     @override
     def calc_metrics(
@@ -211,7 +211,7 @@ class BinaryClassificationTracker(MetricTracker):
             mae = mean_absolute_error(y_true, probs)
             self.log_metric(f"{prefix}_MAE", mae, n_examples)
         except Exception as e:
-            logger.error(e)
+            logger.exception("MAE metric computation failed in calc_metrics")
         try:
             roc_auc = roc_auc_score(  # pyright: ignore[reportUnknownVariableType]
                 y_true.long().numpy(),
@@ -221,17 +221,13 @@ class BinaryClassificationTracker(MetricTracker):
             )
             self.log_metric(f"{prefix}_roc_auc", roc_auc, n_examples)  # pyright: ignore[reportArgumentType]
         except Exception as e:
-            logger.error(e)
+            logger.exception("roc_auc metric computation failed in calc_metrics")
 
         try:
             pr_auc = average_precision_score(y_true.long().numpy(), probs.numpy())
             self.log_metric(f"{prefix}_PR_AUC", pr_auc, n_examples)  # pyright: ignore[reportArgumentType]
-        except Exception as e:
-            try:
-                mssg = f"{e}\nrecall:{recall}\nprecision:{precision}"
-            except:
-                mssg = str(e)
-            logger.error(mssg)
+        except Exception:
+            logger.exception("PR_AUC metric computation failed in calc_metrics")
 
         # binary case
         preds = torch.zeros_like(probs)
@@ -251,24 +247,24 @@ class BinaryClassificationTracker(MetricTracker):
                 f"{prefix}_balanced_accuracy:50", balanced_accuracy, n_examples
             )  # pyright: ignore[reportArgumentType]
         except Exception as e:
-            logger.error(e)
+            logger.exception("balanced accuracy metric computation failed in calc_metrics")
 
         try:
             f1 = f1_score(y_true, preds)
             self.log_metric(f"{prefix}_F1:50", f1, n_examples)  # pyright: ignore[reportArgumentType]
         except Exception as e:
-            logger.error(e)
+            logger.exception("f1 metric computation failed in calc_metrics")
 
         try:
             recall = recall_score(y_true.long().numpy(), preds.numpy())
             self.log_metric(f"{prefix}_recall:50", recall, n_examples)
         except Exception as e:
-            logger.error(e)
+            logger.exception("recall metric computation failed in calc_metrics")
         try:
             precision = precision_score(y_true.long().numpy(), preds.numpy())
             self.log_metric(f"{prefix}_precision:50", precision, n_examples)
         except Exception as e:
-            logger.error(e)
+            logger.exception("precision metric computation failed in calc_metrics")
 
         thetas = np.linspace(0.25, 0.75, num=20, endpoint=False)
         accuracy_scores = []
@@ -339,7 +335,7 @@ class BinaryClassificationTracker(MetricTracker):
                 )
                 self.log_metric(f"{prefix}_F1:{average}", f1, n_examples)
             except Exception as e:
-                logger.error(e)
+                logger.exception("per-label f1 computation failed in _calc_multilabel_metrics")
             try:
                 precision = precision_score(
                     y_multi.numpy(), preds.numpy(), average=average, zero_division=0  # pyright: ignore[reportCallIssue, reportArgumentType]
@@ -348,14 +344,14 @@ class BinaryClassificationTracker(MetricTracker):
                     f"{prefix}_precision:{average}", precision, n_examples
                 )
             except Exception as e:
-                logger.error(e)
+                logger.exception("per-label precision computation failed in _calc_multilabel_metrics")
             try:
                 recall = recall_score(
                     y_multi.numpy(), preds.numpy(), average=average, zero_division=0  # pyright: ignore[reportCallIssue, reportArgumentType]
                 )
                 self.log_metric(f"{prefix}_recall:{average}", recall, n_examples)
             except Exception as e:
-                logger.error(e)
+                logger.exception("per-label recall computation failed in _calc_multilabel_metrics")
 
         plot_cap = min(n_out, 10)
         if plot_cap < n_out:
@@ -373,7 +369,7 @@ class BinaryClassificationTracker(MetricTracker):
                     save_kwargs={"dpi": 72},
                 )
             except Exception as e:
-                logger.error(e)
+                logger.exception("plot rendering failed: per-label ROC curve in _calc_multilabel_metrics")
             try:
                 pr_plot = PrecisionRecallDisplay.from_predictions(  # pyright: ignore[reportUnknownMemberType]
                     y_multi[:, c].numpy(), probs[:, c].numpy()
@@ -384,4 +380,4 @@ class BinaryClassificationTracker(MetricTracker):
                     save_kwargs={"dpi": 72},
                 )
             except Exception as e:
-                logger.error(e)
+                logger.exception("plot rendering failed: per-label precision-recall curve in _calc_multilabel_metrics")

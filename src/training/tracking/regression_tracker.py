@@ -202,11 +202,11 @@ class RegregressionTracker(MetricTracker):
             mae = mean_absolute_error(y_true.numpy(), preds.numpy())
             self.log_metric(f"{prefix}_MAE", mae, n_examples)
         except Exception as e:
-            logger.error(e)
+            logger.exception("MAE metric computation failed in calc_metrics")
 
         try:
             mae = torch.abs(y_true - preds)
             wape = ((torch.sum(mae) / torch.sum(y_true)).item()) * 100
             self.log_metric(f"{prefix}_WAPE", wape, n_examples)
         except Exception as e:
-            logger.error(e)
+            logger.exception("WAPE metric computation failed in calc_metrics")
