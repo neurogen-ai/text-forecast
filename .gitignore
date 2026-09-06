@@ -12,6 +12,7 @@ setup.py
 *.obj
 
 # Other
+tmp/
 .handoff
 src/models/trace.json
 *config.toml
