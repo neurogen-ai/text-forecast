@@ -8,7 +8,7 @@ neighbourhood; it only concatenates the requested token columns (e.g.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from logging import getLogger
 from pathlib import Path
 from typing import Self, override
@@ -52,6 +52,7 @@ class TextTokenDatasetConfig(BaseModel):
     return_id: bool = True
     subsample: int | None = None
     theta: float = 0.0
+    return_date: bool = False
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
@@ -84,6 +85,12 @@ class TextTokenDataset(Dataset[TokenBatch]):
         self.name = config.name
         self.return_id = config.return_id
         self.id_col = config.id_col
+        self.return_date = config.return_date
+        self.time_col = config.time_col
+        if self.return_date and config.time_col is None:
+            raise ValueError(
+                f"{config.name}: return_date=True requires time_col to be set"
+            )
         self.subsample = config.subsample
         self.weights = config.weights
         self.theta = config.theta
@@ -112,7 +119,10 @@ class TextTokenDataset(Dataset[TokenBatch]):
         if config.t_end is not None and config.time_col:
             lf = lf.filter(pl.col(config.time_col) < config.t_end)
 
-        if config.time_col:
+        # The time column stays in the frame when return_date is set, so
+        # __getitem__ can emit per-example publication dates for retrieval
+        # models that filter their vector search by date (delta filter).
+        if config.time_col and not self.return_date:
             lf = lf.drop(config.time_col)
         if config.meta_cols:
             lf = lf.drop(config.meta_cols)
@@ -175,6 +185,24 @@ class TextTokenDataset(Dataset[TokenBatch]):
         if self.return_id:
             id_out = torch.tensor(row[self.id_col])
 
+        date_out: Tensor | None = None
+        if self.return_date:
+            assert self.time_col is not None  # validated in __init__
+            raw_date = row[self.time_col]
+            if raw_date is None:
+                raise ValueError(
+                    f"{self.name}: null {self.time_col} at row {idx}; "
+                    "return_date=True requires a publication date"
+                )
+            # Polars Date rows arrive as python ``date`` (Datetime as
+            # ``datetime``). Emit days since the Unix epoch so the unit
+            # matches the vector store's date encoding exactly.
+            if isinstance(raw_date, datetime):
+                raw_date = raw_date.date()
+            date_out = torch.tensor(
+                float((raw_date - date(1970, 1, 1)).days), dtype=torch.float32
+            )
+
         # Optional weights (sub-plan 1.4.6): None when the dataset has no
         # weights configured, a scalar ``(B,)``-collated tensor otherwise.
         weight: Tensor | None = None
@@ -189,6 +217,7 @@ class TextTokenDataset(Dataset[TokenBatch]):
             y=y,
             mask=mask,
             weight=weight,
+            date=date_out,
         )
 
 
@@ -203,10 +232,15 @@ def token_batch_collate(batches: list[TokenBatch]) -> TokenBatch:
     if weight is not None:
         weight = default_collate([b.weight for b in batches])  # type: ignore[arg-type]
 
+    date_field: Tensor | None = batches[0].date
+    if date_field is not None:
+        date_field = default_collate([b.date for b in batches])  # type: ignore[arg-type]
+
     return TokenBatch(
         id=default_collate([b.id for b in batches]),  # type: ignore[arg-type]
         x=default_collate([b.x for b in batches]),  # type: ignore[arg-type]
         y=default_collate([b.y for b in batches]),  # type: ignore[arg-type]
         mask=default_collate([b.mask for b in batches]),  # type: ignore[arg-type]
         weight=weight,
+        date=date_field,
     )

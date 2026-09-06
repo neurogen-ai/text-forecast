@@ -13,11 +13,20 @@ Corpus filters:
   moderate from high-impact papers rather than cited from uncited.
 
 Pipeline: ``AbstractQueryEmbedder`` produces ``N`` query embeddings per
-paper; each query retrieves ``top_k`` vectors from the database (FAISS when
-installed, chunked matmul otherwise); the softmax top-k selection is
-differentiable w.r.t. the embedder (search itself gradient-cancelled); the
-``N * top_k`` retrieved vectors cross-attend with the target token sequence
-inside ``RetrievalForecast``.
+paper; each query first retrieves a pool of ``n_candidates`` rows from the
+database (FAISS when installed, chunked matmul otherwise) under ``no_grad``,
+then a differentiable top-``top_k`` selection runs over that pool with the
+straight-through estimator from CLaRa (He et al., 2026, Algorithm 1): the
+forward pass consumes exactly the hard top-k picks, the backward pass uses
+the softmax gradient over the masked pool, so gradients reach the embedder
+through the selection rather than a soft weighting. The ``N * top_k``
+selected vectors cross-attend with the target token sequence inside
+``RetrievalForecast``.
+
+Recency filter: the vector store loads ``publication_date`` for every db row
+(``delta_years=1.0``), and each example's batch date (``return_date=True``)
+restricts search to rows published at least one year before the example, so
+no paper retrieves neighbours from its own future (or itself).
 """
 
 from __future__ import annotations
@@ -57,23 +66,26 @@ from training.tracking import BinaryClassificationTracker
 
 experiment_name: str = "RetrievalForecast-cited-gr-1-theta-5"
 
-_SOURCE_NAME = "all-lowercase-2-subset"
+_SOURCE_NAME = "all-lowercase-2-embedded"
 _X_COLS = ["title_tokens", "abstract_tokens"]
-_Y_COL = ["cited_by_count"]
+_Y_COL = ["citation_normalized_percentile"]
 _MAX_LEN = 256
 _PAD_TOKEN_ID = 0  # Must match the tokenizer used during preprocessing.
-_BATCH_SIZE = 16
+_BATCH_SIZE = 8
 _NUM_WORKERS = 2
-_EPOCHS = 8
+_EPOCHS = 10
 
 # Retrieval hyperparameters.
-_N_QUERIES = 8  # N: query embeddings per paper
-_TOP_K = 4  # vectors retrieved per query -> retrieved sequence length 32
-_DB_MAX_ROWS = 50_000  # cap on corpus vectors loaded into the database
+_N_QUERIES = 64  # N: query embeddings per paper
+_TOP_K = 2  # vectors selected per query -> retrieved sequence length 32
+_N_CANDIDATES = 50_000  # stage-1 pool size for the CLaRa ST top-k (paper: 20)
+_DB_MAX_ROWS = 250_000  # cap on corpus vectors loaded into the database
 _EMBEDDING_COL = "abstract_embedding"  # precomputed parquet embedding column
+_EMBEDDING_DIM = 768  # output dim of the registered preprocess embedders
+_DELTA_YEARS = 1.0  # retrieved rows must be >= this many years older
 
 # Binary target: cited_by_count > 5, over papers with >= 1 citation.
-_THETA = 5.0
+_THETA = 0.75
 
 
 def build(
@@ -88,15 +100,15 @@ def build(
     source = build_default_source_backend(env).get_source(_SOURCE_NAME)
 
     # Both training rows and the retrieval corpus keep only cited papers.
-    filter_expr = pl.col(_Y_COL) >= 1
+    filter_expr = ((pl.col('cited_by_count') >= 1) & (pl.col('field_name') == 'Chemistry'))
 
     base_dataset_kwargs = {
         "loc": _SOURCE_NAME,
         "x": _X_COLS,
         "y": _Y_COL,
-        "meta_cols": [],
+        "meta_cols": ['field_name', 'cited_by_count'],
         "filter": filter_expr,
-        "weights": None,
+        "weights": torch.tensor([0.816, 1.291]),
         "max_len": _MAX_LEN,
         "pad_token_id": _PAD_TOKEN_ID,
         "pad": True,
@@ -106,21 +118,22 @@ def build(
         "time_col": "publication_date",
         "id_col": "id",
         "return_id": True,
+        "return_date": True,
         "theta": _THETA,
     }
 
     train_config = TextTokenDatasetConfig(
         **base_dataset_kwargs,
         name="train-retrieval",
-        t_start=date(1920, 1, 1),
-        t_end=date(1990, 1, 1),
+        t_start=date(1950, 1, 1),
+        t_end=date(2015, 1, 1),
         subsample=subsample,
     )
     val_config = TextTokenDatasetConfig(
         **base_dataset_kwargs,
         name="val-retrieval",
-        t_start=date(1990, 1, 1),
-        t_end=date(1991, 1, 1),
+        t_start=date(2015, 1, 1),
+        t_end=date(2018, 1, 1),
         subsample=subsample,
     )
     # Vector database: precomputed embeddings of all papers with >= 1
@@ -131,6 +144,7 @@ def build(
         filter=filter_expr,
         max_rows=_DB_MAX_ROWS,
         normalize=True,
+        delta_years=_DELTA_YEARS,
         name="vector-store",
     )
     store = VectorStoreDataset(config=store_config, source=source)
@@ -140,14 +154,15 @@ def build(
 
     model_config = RetrievalModelConfig(
         n_heads=4,
-        n_layers=4,
+        n_layers=8,
         vocab_size=201_088,
-        embed_dim=256,
-        hidden_dim=1024,
+        embed_dim=_EMBEDDING_DIM,  # must match the precomputed embedding dim
+        hidden_dim=2048,
         n_out=1,
         dropout=0.1,
         n_queries=_N_QUERIES,
         top_k=_TOP_K,
+        n_candidates=_N_CANDIDATES,
         max_len=_MAX_LEN,
     )
     embedder = AbstractQueryEmbedder(
@@ -166,6 +181,8 @@ def build(
         store_search=store.search,
         device=device,
         dtype=dtype,
+        store_dates=store.dates,
+        delta_years=store.config.delta_years,
     )
 
     loss_fn = BinaryCrossEntropyLoss(config=None)
@@ -177,9 +194,9 @@ def build(
     else:
         stream_context = nullcontext()
 
-    optimizer_spec = AdamWSpec(lr=1e-3, weight_decay=1e-3)
+    optimizer_spec = AdamWSpec(lr=1e-4, weight_decay=1e-3)
     scheduler_spec = WarmupCosineSpec(
-        milestones=(0,),
+        milestones=(2,),
         warmup_start_factor=1e-5,
         eta_min=1e-6,
         epochs=_EPOCHS,
@@ -207,7 +224,7 @@ def build(
         prefetch_factor=4,
         persistent_workers=False,
         pin_memory=True,
-        shuffle=False,
+        shuffle=True,
         drop_last=True,
         collate_fn=token_batch_collate,
     )

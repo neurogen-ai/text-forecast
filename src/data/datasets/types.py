@@ -21,6 +21,9 @@ class TokenBatch(NamedTuple):
             themselves, e.g. ``mask[:, None, None, :]`` for SDPA.
         weight: ``(B,)`` float loss weights, or None when the dataset has no
             weights configured.
+        date: ``(B,)`` float32 publication dates as days since the Unix epoch,
+            or None when the dataset has ``return_date=False``. Consumed by
+            retrieval models for delta-filtered vector search.
     """
 
     id: Tensor
@@ -28,6 +31,7 @@ class TokenBatch(NamedTuple):
     y: Tensor
     mask: Tensor
     weight: Tensor | None
+    date: Tensor | None = None
 
 
 class CitationGraphDatasetOutput(NamedTuple):

@@ -76,6 +76,15 @@ logger.debug(
 
 preprocess_image = (
     modal.Image.debian_slim(python_version=_PYTHON_VERSION)
+    # CUDA torch pinned from the PyTorch cu124 index first, so the subsequent
+    # pip_install_from_pyproject sees torch already satisfied (pip skips the
+    # [project.dependencies] entry) and does not pull an unpinned PyPI build.
+    # pip ignores [tool.uv.*], so the uv index config below cannot be relied
+    # on for the image build.
+    .pip_install(
+        "torch==2.6.0+cu124",
+        extra_index_url="https://download.pytorch.org/whl/cu124",
+    )
     .pip_install_from_pyproject("pyproject.toml")
     .add_local_file("pyproject.toml", "/root/pyproject.toml", copy=True)
     .add_local_dir("src", remote_path="/root/src", copy=True)
