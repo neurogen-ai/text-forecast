@@ -15,6 +15,7 @@ from pathlib import Path
 
 import polars as pl
 import torch
+from datetime import date
 from pydantic import BaseModel, ConfigDict
 from torch import Tensor
 from torch.utils.data import Dataset  # type: ignore[reportUnknownVariableType]
@@ -46,6 +47,13 @@ class VectorStoreDatasetConfig(BaseModel):
     max_rows: int | None = None
     normalize: bool = True
     time_col: str | None = "publication_date"
+    # Optional corpus time bounds (same convention as TextTokenDataset:
+    # t_start inclusive, t_end exclusive). Applied to the time column at
+    # load time; both default to None = no bound. These bound the *store*
+    # independently of the example datasets' t_start/t_end, so the corpus
+    # can cover a different window than the training rows.
+    t_start: date | None = None
+    t_end: date | None = None
     delta_years: float = 0.0
     name: str
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -93,6 +101,11 @@ class VectorStoreDataset(Dataset):
             needed.append(config.time_col)
         if config.filter is not None:
             lf = lf.filter(config.filter)
+        if config.time_col is not None:
+            if config.t_start is not None:
+                lf = lf.filter(pl.col(config.time_col) >= config.t_start)
+            if config.t_end is not None:
+                lf = lf.filter(pl.col(config.time_col) < config.t_end)
 
         lf = lf.select(needed)
         lf = lf.drop_nulls(needed)
