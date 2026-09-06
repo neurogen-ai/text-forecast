@@ -145,8 +145,9 @@ def run_eval_pipeline(
     last_metrics: dict[str, float] = {}
     current_t_start = job.start_date
 
+    mlflow.set_tracking_uri(job.env.tracking_uri)
+
     with mlflow.start_run(run_id=job.eval_run_id):
-        mlflow.set_tracking_uri(job.env.tracking_uri)
         set_run_name(
             job.eval_run_id,
             f"{job.prefix}-{type(exp.model).__name__}-{job.run_id}",
