@@ -133,6 +133,13 @@ through the experiment's configured processor (local, MLflow store, or S3).
 
 `--runtime` to select the execution backend (overrides `[runtime].default`).
 
+`--dtype` selects the compute dtype for model parameters and the large
+retriever tensors: `bf16` (default), `fp32`, or `fp16`. fp16 ships with a
+warning — the training loop has no autocast or `GradScaler` — so prefer bf16.
+Eval always builds its context in fp32; a bf16 checkpoint loads with a silent
+upcast, so pass `--dtype bf16` again when resuming to keep the original
+numerics.
+
 With `--runtime modal`, `ModalRuntime.run_train` creates the MLflow run
 client-side (plan P6), maps the job onto the Modal volumes, and spawns a
 `ModalTrainingGPU` container running the identical pipeline headless. It
