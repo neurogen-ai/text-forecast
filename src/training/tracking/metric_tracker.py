@@ -133,6 +133,11 @@ class MetricTracker:
 
         if len(store) > 0:
             all_values: Tensor = torch.cat(store)
+            # numpy has no bfloat16; convert bf16 stores to fp32 so every
+            # downstream .numpy() call site (metrics, plots, export) works.
+            # Other dtypes (fp32/fp64/fp16/integer) pass through unchanged.
+            if all_values.dtype == torch.bfloat16:
+                all_values = all_values.float()
             if self.export and self.export_loc is not None:
                 logger.debug(
                     f"Exporting {store_name} store to {self.export_loc.resolve()}"
