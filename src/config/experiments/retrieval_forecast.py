@@ -88,8 +88,18 @@ _DELTA_YEARS = 1.0  # retrieved rows must be >= this many years older
 # Corpus time bounds (independent of the example datasets' windows). The
 # store defaults to no bound; pinning t_end to the val window's end keeps
 # future papers out of the corpus even for ladder-relaxed examples.
-_STORE_T_START = date(1920, 1, 1)
+_STORE_T_START = date(1950, 1, 1)
 _STORE_T_END = date(2018, 1, 1)
+
+# Corpus scope vs example scope: two deliberately separate filter
+# expressions so the corpus can stay wider than the training rows (AD4:
+# widening is a config change here, not a CLI surface).
+# - Examples: Medicine papers with >= 1 citation.
+# - Corpus: all papers with >= 1 citation, no field restriction.
+_EXAMPLES_FILTER_EXPR = (
+    (pl.col('cited_by_count') >= 1) & (pl.col('field_name') == 'Medicine')
+)
+_CORPUS_FILTER_EXPR = (pl.col('cited_by_count') >= 1)
 
 # Binary target: cited_by_count > 5, over papers with >= 1 citation.
 _THETA = 0.75
@@ -106,22 +116,11 @@ def build(
 
     source = build_default_source_backend(env).get_source(_SOURCE_NAME)
 
-    # Both training rows and the retrieval corpus keep only cited papers.
-    examples_filter_expr = ((pl.col('cited_by_count') >= 1) & (pl.col('field_name') == 'Medicine'))
-    corpus_filter_expr = ((pl.col('cited_by_count') >= 1) & \
-                pl.col("field_name").is_in([
-                    "Medicine",
-                    "Chemistry",
-                    "Agricultural and Biological Sciences",
-                    "Biochemistry, Genetics and Molecular Biology",
-                    "Immunology and Microbiology",
-                    "Neuroscience",
-                    "Nursing",
-                    "Pharmacology, Toxicology and Pharmaceutics",
-                    "Dentistry",
-                    "Chemical Engineering",
-                    "Veterinary",
-                ]))
+    # Training rows: Medicine only; corpus: all fields with >= 1 citation
+    # (the two filters are deliberately separate expressions so example
+    # scope and corpus scope can differ).
+    examples_filter_expr = _EXAMPLES_FILTER_EXPR
+    corpus_filter_expr = _CORPUS_FILTER_EXPR
 
     base_dataset_kwargs = {
         "loc": _SOURCE_NAME,

@@ -444,6 +444,90 @@ def test_store_and_dataset_dates_share_encoding(tmp_path: Path) -> None:
     assert store.dates[0].item() == 10957.0
 
 
+def test_store_t_bounds_applied_at_scan(tmp_path: Path) -> None:
+    """t_start/t_end bounds on VectorStoreDatasetConfig apply to the time
+    column during the lazy parquet scan: t_start inclusive, t_end exclusive
+    (AD1/AD2), independent of the example datasets' windows."""
+    _write_store_parquet(path := tmp_path / "store")
+    start = date(2000, 1, 1)
+    # Bounds land exactly on fixture row dates: row 5 (t_start, inclusive)
+    # and row 20 (t_end, exclusive) -> rows 5..19 survive, 15 rows.
+    t_start = date.fromordinal(start.toordinal() + 5 * 90)
+    t_end = date.fromordinal(start.toordinal() + 20 * 90)
+    store = _store(path, t_start=t_start, t_end=t_end)
+
+    assert store.db.shape == (15, DIM)
+    assert store.dates is not None
+    epoch = date(1970, 1, 1)
+    # t_start inclusive: the row dated exactly t_start is kept.
+    assert store.dates.min().item() == float((t_start - epoch).days)
+    # t_end exclusive: the row dated exactly t_end is dropped; the newest
+    # kept row is one fixture step (90 days) before t_end.
+    assert store.dates.max().item() == float((t_end - epoch).days - 90)
+    assert float((t_end - epoch).days) not in store.dates.tolist()
+
+    # Without bounds the same fixture yields all 24 rows, so the assertion
+    # above is not vacuous.
+    unbounded = _store(path)
+    assert unbounded.db.shape == (24, DIM)
+
+
+def test_startup_log_carries_corpus_row_count_and_window(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The 'vector db (M, D)' startup line also reports the pre-sampling
+    corpus row count (so silent max_rows subsampling is visible) and the
+    effective t-bounds window when one is configured."""
+    _write_store_parquet(path := tmp_path / "store")
+    start = date(2000, 1, 1)
+    # Window spanning the whole fixture: all 24 rows are collected, then
+    # max_rows subsamples them to 10 - exactly the silent path this line
+    # must make visible.
+    t_start = start
+    t_end = date.fromordinal(start.toordinal() + 24 * 90)
+    with caplog.at_level("INFO", logger="data.datasets.retrieval_dataset"):
+        _store(path, t_start=t_start, t_end=t_end, max_rows=10)
+    line = next(r.message for r in caplog.records if "vector db" in r.message)
+    # 24 rows were collected; max_rows subsampled them to 10.
+    assert "24 corpus rows" in line
+    assert "max_rows=10" in line
+    assert f"window [{t_start}, {t_end})" in line
+
+
+def test_experiment_corpus_filter_is_independent_of_example_filter() -> None:
+    """The experiment wires a separate corpus filter expression
+    (cited_by_count >= 1, no field restriction) and pins the store window to
+    1950-01-01 <= date < 2018-01-01, so corpus scope can differ from the
+    example datasets' scope. The experiment module is imported here (not at
+    module level) so the rest of this suite does not depend on its heavier
+    import chain (checkpointing/tracking)."""
+    from config.experiments import retrieval_forecast as exp
+
+    assert set(exp._CORPUS_FILTER_EXPR.meta.root_names()) == {"cited_by_count"}
+    assert set(exp._EXAMPLES_FILTER_EXPR.meta.root_names()) == {
+        "cited_by_count",
+        "field_name",
+    }
+    assert exp._STORE_T_START == date(1950, 1, 1)
+    assert exp._STORE_T_END == date(2018, 1, 1)
+
+    # Semantics on a toy frame: the corpus filter keeps every cited paper
+    # regardless of field; the example filter keeps only Medicine.
+    df = pl.DataFrame(
+        {
+            "cited_by_count": [1.0, 1.0, 0.0],
+            "field_name": ["Chemistry", "Medicine", "Medicine"],
+        }
+    )
+    assert df.filter(exp._CORPUS_FILTER_EXPR)["field_name"].to_list() == [
+        "Chemistry",
+        "Medicine",
+    ]
+    assert df.filter(exp._EXAMPLES_FILTER_EXPR)["field_name"].to_list() == [
+        "Medicine"
+    ]
+
+
 def test_dim_guard_raises_on_embedding_mismatch() -> None:
     cfg = RetrievalModelConfig(
         n_heads=2, n_layers=1, vocab_size=64, embed_dim=16, hidden_dim=32,
