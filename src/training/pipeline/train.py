@@ -38,6 +38,7 @@ class TrainJob:
     start_epoch: int | None = None
     compile_mode: str = ""
     fullgraph: bool = False
+    dtype: str = "fp32"
     load_id: str = ""
     load_epoch: int | None = None
     model_only: bool = False   # skip optimizer/scheduler restore on resume
@@ -78,6 +79,7 @@ def run_train_pipeline(
             compile_mode=job.compile_mode,
             fullgraph=job.fullgraph,
             subsample=job.subsample,
+            dtype=job.dtype,
         )
         exp = load_experiment_from_path(path, runtime, env=job.env)
 

@@ -50,6 +50,11 @@ def main(
         "-c",
         help="Compile mode for torch.compile",
     ),
+    dtype: str = typer.Option(
+        "bf16",
+        "--dtype",
+        help="Compute dtype: bf16 (default), fp32, or fp16 (no GradScaler; prefer bf16)",
+    ),
     fullgraph: bool = typer.Option(
         False,
         "--fullgraph",
@@ -146,6 +151,7 @@ def main(
         start_epoch=start_epoch,
         compile_mode=compile,
         fullgraph=fullgraph,
+        dtype=dtype,
         load_id=load_id,
         load_epoch=load_epoch,
         model_only=model_only,
