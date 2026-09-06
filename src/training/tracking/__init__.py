@@ -5,6 +5,8 @@ from .heteroscadastic_regression_tracker import HSRegregressionTracker
 from .log_lrs import log_lrs
 from .metric_tracker import MetricTracker
 from .ordinal_regression_tracker import OrdinalRegressionTracker
+from .param_keys import resolve_keys
+from .params import collect_scalars, log_params_guarded
 from .regression_tracker import RegregressionTracker
 
 __all__ = [
@@ -16,4 +18,7 @@ __all__ = [
     "ClassificationTracker",
     "log_lrs",
     "calc_metrics",
+    "collect_scalars",
+    "log_params_guarded",
+    "resolve_keys",
 ]
