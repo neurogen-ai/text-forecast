@@ -17,6 +17,8 @@ from collections.abc import Mapping
 from dataclasses import fields as dataclass_fields, is_dataclass
 from typing import NamedTuple
 
+from .param_keys import SUFFIX_RULES
+
 logger = logging.getLogger(__name__)
 
 LeafValue = bool | int | float | str
@@ -70,6 +72,8 @@ def _add_leaf(
     for other_origin, other in leaves.items():
         other_bare = other_origin.rsplit(".", 1)[-1]
         if other_bare == bare_key and other.value != value:
+            if bare_key in SUFFIX_RULES:
+                break  # tabled ambiguity; resolve_keys disambiguates
             raise KeyError(
                 f"colliding paths {other_origin!r} and {origin!r} share the "
                 f"bare key {bare_key!r} but carry different values "
@@ -103,7 +107,8 @@ def collect_scalars(*roots: tuple[str, object]) -> dict[str, Leaf]:
     treat Mapping[str, scalar] roots as explicit leaves. Keep
     str/int/float/bool leaves; stringify other objects as their class name,
     with None as "None". Raise KeyError naming the colliding paths when two
-    bare leaves carry different values.
+    bare leaves carry different values, except for bare keys named in
+    SUFFIX_RULES, which resolve_keys disambiguates.
 
     The returned dict is keyed by full origin path, so a tabled leaf may
     appear under several origins with differing values.

@@ -164,3 +164,13 @@ class TestLogParamsGuarded:
         monkeypatch.setitem(sys.modules, "mlflow", stub)
         with pytest.raises(RuntimeError, match="active MLflow run"):
             log_params_guarded({"a": "b"})
+
+
+def test_tabled_differing_value_collision_is_allowed():
+    # embed_dim is in SUFFIX_RULES; resolve_keys disambiguates it, so the
+    # walker must not raise here.
+    leaves = collect_scalars(
+        ("model.config.embedder", {"embed_dim": 8}),
+        ("model.config.forecaster", {"embed_dim": 16}),
+    )
+    assert len(leaves) == 2
