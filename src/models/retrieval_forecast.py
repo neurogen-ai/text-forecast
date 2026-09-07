@@ -463,13 +463,23 @@ class VectorRetriever(nn.Module):
         # the masked fp32 scores reuses torch.topk (no multinomial: no
         # graph-break risk and no per-row host sync); -inf slots stay -inf
         # under the perturbation, so pool purity is preserved exactly.
-        gen = torch.Generator(device="cpu")
+        # Noise is drawn on the scores' device with a same-device
+        # generator: the historical CPU-side (B*N, M) rand plus H2D copy
+        # ran on every search call and dominated the random/mixed path.
+        # Reproducibility across checkpoint resume is preserved (same seed
+        # folded from the batch ids on the same device); the draw differs
+        # from the historical CPU stream, so pools are not byte-identical
+        # across device types.
+        gen = torch.Generator(device=scores.device)
         gen.manual_seed(self._batch_seed(ids))
         gumbel = -torch.log(
             -torch.log(
                 torch.rand(
-                    scores.shape, generator=gen, dtype=torch.float32
-                ).to(scores.device)
+                    scores.shape,
+                    generator=gen,
+                    device=scores.device,
+                    dtype=torch.float32,
+                )
                 + 1e-12
             )
             + 1e-12
