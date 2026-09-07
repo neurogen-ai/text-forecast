@@ -18,8 +18,9 @@ from training.pipeline._common import (
     experiment_file,
     model_source_file,
 )
+from training.tracking import collect_scalars, log_params_guarded, resolve_keys
 
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -38,6 +39,7 @@ class TrainJob:
     start_epoch: int | None = None
     compile_mode: str = ""
     fullgraph: bool = False
+    dtype: str = "fp32"
     load_id: str = ""
     load_epoch: int | None = None
     model_only: bool = False   # skip optimizer/scheduler restore on resume
@@ -54,6 +56,70 @@ def _resolve_start_epoch(job: TrainJob) -> int:
     if job.load_epoch is not None:
         return job.load_epoch + 1
     return 1
+
+
+def _is_config_instance(cfg: object) -> bool:
+    """True for a dataclass or pydantic instance, false for classes/None.
+
+    Models that keep their constructor config as a class attribute
+    (graph_recurrent's ``config = ModelConfig``) fail this check and ride
+    ``model_class`` only, per AD8 - no special case.
+    """
+    if cfg is None or isinstance(cfg, type):
+        return False
+    if is_dataclass(cfg):
+        return True
+    try:
+        from pydantic import BaseModel
+    except ImportError:  # pragma: no cover - pydantic is a hard dependency
+        return False
+    return isinstance(cfg, BaseModel)
+
+
+def compose_train_params(
+    exp, runtime
+) -> list[tuple[str, object]]:
+    """Assemble the walker roots for a train run's hyperparameter log.
+
+    Reads only: experiment_name, eval/checkpoint intervals, model,
+    train_loader, val_loader, strategy.config, and the runtime passed in.
+    New param sources are new roots here; the walker and rename table
+    absorb everything else. ``epochs`` rides the scheduler spec, which
+    derives it from the same constant the Experiment gets; adding a second
+    epochs source would be a differing-value collision the walker raises
+    on, so it is deliberately not duplicated here.
+    """
+    roots: list[tuple[str, object]] = [
+        (
+            "experiment",
+            {
+                "experiment_name": exp.experiment_name,
+                "model_class": type(exp.model).__name__,
+                "eval_interval": exp.eval_interval,
+                "checkpoint_interval": exp.checkpoint_interval,
+            },
+        ),
+        (
+            "train",
+            {
+                "examples": len(exp.train_loader.dataset),
+                "batch_size": exp.train_loader.batch_size,
+            },
+        ),
+        (
+            "val",
+            {
+                "examples": len(exp.val_loader.dataset),
+                "batch_size": exp.val_loader.batch_size,
+            },
+        ),
+        ("runtime", runtime),
+        ("strategy", exp.strategy.config),
+    ]
+    model_config = getattr(exp.model, "config", None)
+    if _is_config_instance(model_config):
+        roots.append(("model", model_config))
+    return roots
 
 
 def run_train_pipeline(
@@ -78,6 +144,7 @@ def run_train_pipeline(
             compile_mode=job.compile_mode,
             fullgraph=job.fullgraph,
             subsample=job.subsample,
+            dtype=job.dtype,
         )
         exp = load_experiment_from_path(path, runtime, env=job.env)
 
@@ -117,13 +184,10 @@ def run_train_pipeline(
             if model_file is not None and model_file.exists():
                 mlflow.log_artifact(str(model_file))
 
-            mlflow.log_params(
-                {
-                    "experiment_name": exp.experiment_name,
-                    "model.class": model_name,
-                    "train.examples": len(exp.train_loader.dataset),
-                    "val.examples": len(exp.val_loader.dataset),
-                }
+            log_params_guarded(
+                resolve_keys(
+                    collect_scalars(*compose_train_params(exp, runtime))
+                )
             )
 
             engine = Engine(experiment=exp, runtime=runtime, progress=progress)

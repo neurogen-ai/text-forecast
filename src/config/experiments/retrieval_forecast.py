@@ -71,18 +71,25 @@ _X_COLS = ["title_tokens", "abstract_tokens"]
 _Y_COL = ["citation_normalized_percentile"]
 _MAX_LEN = 256
 _PAD_TOKEN_ID = 0  # Must match the tokenizer used during preprocessing.
-_BATCH_SIZE = 8
+_BATCH_SIZE_TRAIN = 16
+_BATCH_SIZE_VAL = 8
 _NUM_WORKERS = 2
 _EPOCHS = 10
 
 # Retrieval hyperparameters.
 _N_QUERIES = 64  # N: query embeddings per paper
 _TOP_K = 2  # vectors selected per query -> retrieved sequence length 32
-_N_CANDIDATES = 50_000  # stage-1 pool size for the CLaRa ST top-k (paper: 20)
+_N_CANDIDATES = 10_000  # stage-1 pool size for the CLaRa ST top-k (paper: 20)
 _DB_MAX_ROWS = 250_000  # cap on corpus vectors loaded into the database
 _EMBEDDING_COL = "abstract_embedding"  # precomputed parquet embedding column
 _EMBEDDING_DIM = 768  # output dim of the registered preprocess embedders
 _DELTA_YEARS = 1.0  # retrieved rows must be >= this many years older
+
+# Corpus time bounds (independent of the example datasets' windows). The
+# store defaults to no bound; pinning t_end to the val window's end keeps
+# future papers out of the corpus even for ladder-relaxed examples.
+_STORE_T_START = date(1920, 1, 1)
+_STORE_T_END = date(2018, 1, 1)
 
 # Binary target: cited_by_count > 5, over papers with >= 1 citation.
 _THETA = 0.75
@@ -100,14 +107,28 @@ def build(
     source = build_default_source_backend(env).get_source(_SOURCE_NAME)
 
     # Both training rows and the retrieval corpus keep only cited papers.
-    filter_expr = ((pl.col('cited_by_count') >= 1) & (pl.col('field_name') == 'Chemistry'))
+    examples_filter_expr = ((pl.col('cited_by_count') >= 1) & (pl.col('field_name') == 'Medicine'))
+    corpus_filter_expr = ((pl.col('cited_by_count') >= 1) & \
+                pl.col("field_name").is_in([
+                    "Medicine",
+                    "Chemistry",
+                    "Agricultural and Biological Sciences",
+                    "Biochemistry, Genetics and Molecular Biology",
+                    "Immunology and Microbiology",
+                    "Neuroscience",
+                    "Nursing",
+                    "Pharmacology, Toxicology and Pharmaceutics",
+                    "Dentistry",
+                    "Chemical Engineering",
+                    "Veterinary",
+                ]))
 
     base_dataset_kwargs = {
         "loc": _SOURCE_NAME,
         "x": _X_COLS,
         "y": _Y_COL,
         "meta_cols": ['field_name', 'cited_by_count'],
-        "filter": filter_expr,
+        "filter": examples_filter_expr,
         "weights": torch.tensor([0.816, 1.291]),
         "max_len": _MAX_LEN,
         "pad_token_id": _PAD_TOKEN_ID,
@@ -141,9 +162,11 @@ def build(
     store_config = VectorStoreDatasetConfig(
         loc=_SOURCE_NAME,
         embedding_col=_EMBEDDING_COL,
-        filter=filter_expr,
+        filter=corpus_filter_expr,
         max_rows=_DB_MAX_ROWS,
         normalize=True,
+        t_start=_STORE_T_START,
+        t_end=_STORE_T_END,
         delta_years=_DELTA_YEARS,
         name="vector-store",
     )
@@ -194,7 +217,7 @@ def build(
     else:
         stream_context = nullcontext()
 
-    optimizer_spec = AdamWSpec(lr=1e-4, weight_decay=1e-3)
+    optimizer_spec = AdamWSpec(lr=1e-5, weight_decay=1e-3)
     scheduler_spec = WarmupCosineSpec(
         milestones=(2,),
         warmup_start_factor=1e-5,
@@ -219,7 +242,7 @@ def build(
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=_BATCH_SIZE,
+        batch_size=_BATCH_SIZE_TRAIN,
         num_workers=_NUM_WORKERS,
         prefetch_factor=4,
         persistent_workers=False,
@@ -230,13 +253,13 @@ def build(
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=_BATCH_SIZE,
+        batch_size=_BATCH_SIZE_VAL,
         num_workers=_NUM_WORKERS,
         prefetch_factor=4,
         persistent_workers=False,
         pin_memory=True,
         shuffle=False,
-        drop_last=True,
+        drop_last=False,
         collate_fn=token_batch_collate,
     )
 

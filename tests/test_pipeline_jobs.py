@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import datetime
 
 import pytest
+import torch
 
 from config.env import Env
 from runtime.base import RunResult
@@ -88,6 +89,13 @@ class TestHelpers:
         ctx = build_run_context(gpu=False, compile_mode="", subsample=8)
         assert ctx.device.type == "cpu"
         assert ctx.subsample == 8
+
+    def test_build_run_context_dtype(self) -> None:
+        assert build_run_context(gpu=False, dtype="fp32").dtype is torch.float32
+        assert build_run_context(gpu=False, dtype="bf16").dtype is torch.bfloat16
+        assert build_run_context(gpu=False, dtype="fp16").dtype is torch.float16
+        with pytest.raises(ValueError, match="Unknown dtype"):
+            build_run_context(gpu=False, dtype="fp8")
 
 
 class TestEvalFailFast:

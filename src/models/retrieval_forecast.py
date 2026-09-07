@@ -261,12 +261,20 @@ class VectorRetriever(nn.Module):
         device: torch.device,
         dates: Tensor | None = None,
         delta_years: float = 0.0,
+        dtype: torch.dtype = torch.float32,
     ):
         super().__init__()
         self.top_k = top_k
         self._store_search = store_search
+        self.compute_dtype = dtype
+        # The db buffer is stored in the compute dtype so the stage-2 pool
+        # gather (B, N, C, D) — the single largest tensor in the model — is
+        # half/quarter the fp32 size. Stage-1 scores upcast to fp32 for the
+        # exact top-k; the C-width score matrices are small either way.
         self.register_buffer(
-            "db", torch.nn.functional.normalize(db.float(), dim=-1).to(device),
+            "db",
+            torch.nn.functional.normalize(db.float(), dim=-1)
+            .to(device=device, dtype=dtype),
             persistent=False,
         )
         self.dates_buf: Tensor | None
@@ -361,7 +369,9 @@ class VectorRetriever(nn.Module):
             if self._store_search is not None:
                 idx = self._store_search(q.detach(), n_candidates)
                 return idx.reshape(B, N, n_candidates).to(q.device)
-            scores = q.detach().reshape(B * N, -1).float() @ self.db.T  # (B*N, M)
+            scores = (
+                q.detach().reshape(B * N, -1).float() @ self.db.float().T
+            )  # (B*N, M)
             k = min(n_candidates, scores.size(-1))
             _, idx = torch.topk(scores, k=k, dim=-1)
             return idx.reshape(B, N, k)
@@ -374,7 +384,7 @@ class VectorRetriever(nn.Module):
         # (>= top_k after the ladder) so a disallowed row can never fill a
         # ``-inf`` slot and later win an early ST round.
         k_pool = min(n_candidates, int(allowed.sum(dim=1).min().item()))
-        scores = flat @ self.db.T  # (B*N, M)
+        scores = flat @ self.db.float().T  # (B*N, M), fp32 for exact top-k
         scores = scores.masked_fill(~allowed, float("-inf"))
         _, idx = torch.topk(scores, k=k_pool, dim=-1)
         return idx.reshape(B, N, k_pool)
@@ -408,11 +418,16 @@ class VectorRetriever(nn.Module):
                 f"{self.top_k}; the vector db is smaller than the model "
                 "configuration assumes"
             )
-        pool = self.db[idx].to(q.dtype)  # (B, N, C, D), constants
+        pool = self.db[idx].to(q.dtype)  # (B, N, C, D), constants, compute dtype
         # ~s = s / max(tau, 1e-6): cosine scores scaled by the temperature.
-        s_hat = torch.einsum("bnd,bncd->bnc", q, pool) / max(scale, 1e-6)
-        s_hat = s_hat.reshape(B * N, C).float()  # (B*N, C)
-        pool_flat = pool.reshape(B * N, C, -1).float()
+        # Computed in the pool/queries' dtype (bf16/fp16 when enabled), then
+        # upcast: the CLaRa loop itself runs in fp32 on the small (B*N, C)
+        # score matrices for softmax/log-mask stability.
+        s_hat = (
+            torch.einsum("bnd,bncd->bnc", q, pool) / max(scale, 1e-6)
+        ).float()
+        s_hat = s_hat.reshape(B * N, C)  # (B*N, C), already fp32
+        pool_flat = pool.reshape(B * N, C, -1)
 
         # Eligibility mask for the pool rows under the same relaxed cutoffs
         # the stage-1 search used (per-example date filter; all-True when
@@ -450,7 +465,12 @@ class VectorRetriever(nn.Module):
         z = z_hard + (z_soft - z_soft.detach())
 
         # M^(k) = Z M: gather the hard-picked pool vectors in forward.
-        selected = torch.einsum("bkc,bce->bke", z, pool_flat)
+        # einsum runs in the pool's compute dtype (z is fp32); the fp32
+        # upcast of the (B*N, C, D) pool happens only in the small
+        # score einsum above, never on the full gathered tensor.
+        selected = torch.einsum(
+            "bkc,bce->bke", z.to(pool_flat.dtype), pool_flat
+        )
         return selected.to(q.dtype).reshape(B, N, self.top_k, -1)
 
 
@@ -540,7 +560,7 @@ class RetrievalForecast(nn.Module, Model[RetrievalModelConfig, TokenBatch, Outpu
         self.embedder = embedder
         self.retriever = VectorRetriever(
             db, config.top_k, store_search, device,
-            dates=store_dates, delta_years=delta_years,
+            dates=store_dates, delta_years=delta_years, dtype=dtype,
         )
 
         # Shared position table across both padded sequences.
