@@ -57,6 +57,15 @@ from .protocols import Model
 # exists).
 MIXED_RANDOM_RATIO = 0.25
 
+# Backend-only Gumbel temperature for the random/mixed perturbation
+# (AD3): sampling scores are (scores / GUMBEL_TAU) + gumbel, so tau
+# controls how flat the draw is over the eligible rows. 1.0 preserves
+# the cosine-proportional weighting; larger values smooth toward
+# uniform (tau -> 0 would sharpen to nearest). Deliberately hardcoded
+# and not a config field yet — vet the behaviour first, expose via
+# config in a later minor release only if adopted.
+GUMBEL_TAU = 1.0
+
 
 class RetrievalModelConfig(BaseModel):
     n_heads: int
@@ -463,6 +472,8 @@ class VectorRetriever(nn.Module):
         # the masked fp32 scores reuses torch.topk (no multinomial: no
         # graph-break risk and no per-row host sync); -inf slots stay -inf
         # under the perturbation, so pool purity is preserved exactly.
+        # GUMBEL_TAU smooths the sampling distribution (see its comment);
+        # -inf / tau stays -inf, so the masked rows can never win.
         # Noise is drawn on the scores' device with a same-device
         # generator: the historical CPU-side (B*N, M) rand plus H2D copy
         # ran on every search call and dominated the random/mixed path.
@@ -485,7 +496,7 @@ class VectorRetriever(nn.Module):
             + 1e-12
         )
         if strategy == "random":
-            _, idx = torch.topk(scores + gumbel, k=k_pool, dim=-1)
+            _, idx = torch.topk(scores / GUMBEL_TAU + gumbel, k=k_pool, dim=-1)
             return idx.reshape(B, N, k_pool)
         # "mixed" (AD4): ONE pool of width k_pool - nearest majority plus
         # a Gumbel-random minority at the fixed MIXED_RANDOM_RATIO, not two
@@ -501,7 +512,9 @@ class VectorRetriever(nn.Module):
         nearest_mask.scatter_(1, nearest, True)
         # Random minority: best perturbed picks outside the nearest set.
         fill = torch.topk(
-            (scores + gumbel).masked_fill(nearest_mask, float("-inf")),
+            (scores / GUMBEL_TAU + gumbel).masked_fill(
+                nearest_mask, float("-inf")
+            ),
             k=n_rand,
             dim=-1,
         ).indices
