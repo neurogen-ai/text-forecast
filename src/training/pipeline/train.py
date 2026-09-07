@@ -81,9 +81,13 @@ def compose_train_params(
 ) -> list[tuple[str, object]]:
     """Assemble the walker roots for a train run's hyperparameter log.
 
-    Reads only: experiment_name, model, train_loader, val_loader,
-    strategy.config, and the runtime passed in. New param sources are new
-    roots here; the walker and rename table absorb everything else.
+    Reads only: experiment_name, eval/checkpoint intervals, model,
+    train_loader, val_loader, strategy.config, and the runtime passed in.
+    New param sources are new roots here; the walker and rename table
+    absorb everything else. ``epochs`` rides the scheduler spec, which
+    derives it from the same constant the Experiment gets; adding a second
+    epochs source would be a differing-value collision the walker raises
+    on, so it is deliberately not duplicated here.
     """
     roots: list[tuple[str, object]] = [
         (
@@ -91,6 +95,8 @@ def compose_train_params(
             {
                 "experiment_name": exp.experiment_name,
                 "model_class": type(exp.model).__name__,
+                "eval_interval": exp.eval_interval,
+                "checkpoint_interval": exp.checkpoint_interval,
             },
         ),
         (

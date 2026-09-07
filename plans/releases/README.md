@@ -15,7 +15,7 @@ contract change.
 | Plan | Title | Status |
 |------|-------|--------|
 | [2.1](2.1.md) | Clean pipeline refactor: ordered step specs, per-column intensity controls, nested CLI | implemented (T0–T5); pending one manual `--runtime modal` dry run |
-| [2.2](2.2.md) | CLI launch speed: lazy heavy imports, torch-free modal client paths | drafted; [implementation plan](implementation/v2.2.md) written (branches A–E), not started |
+| [2.2](2.2.md) | CLI launch speed: lazy heavy imports, torch-free modal client paths | drafted; [implementation plan](implementation/v2.5.0.md) written (branches A–E), not started |
 | [2.3](2.3.md) | Retrieval-forecast model, vector store dataset, experiment config | implemented (spec written retroactively) |
 | [2.3.1](2.3.1.md) | MLflow logging fixes: train_ids feed, latched empty-store warning, eval tracking-URI order, logger.exception swaps, hyperparameter param logging | ratified (pending implementation) |
 | [2.4](proposals/) | Expanded query search strategy: candidate pool selection (nearest/random/mixed), independent corpus scope, compute dtype plumbing | proposed; [proposal files](../proposals/) awaiting oracle-vetted ratify. Renumbered the drafted 2.4–2.7 chain to 2.5–2.8 to free the number |

@@ -17,6 +17,8 @@ from collections.abc import Mapping
 from dataclasses import fields as dataclass_fields, is_dataclass
 from typing import NamedTuple
 
+import torch
+
 from .param_keys import SUFFIX_RULES
 
 logger = logging.getLogger(__name__)
@@ -93,10 +95,21 @@ def _visit(obj: object, path: tuple[str, ...], leaves: dict[str, Leaf]) -> None:
     elif (fields := _instance_fields(obj)):
         for name in fields:
             _visit(getattr(obj, name, None), (*path, name), leaves)
+    elif isinstance(obj, (torch.device, torch.dtype)):
+        # Runtime scalars whose str() form IS the information ("cuda:0",
+        # "torch.bfloat16"). torch.dtype.__name__ is just "dtype", so the
+        # class-name fallback would record nothing about the run.
+        _add_leaf(leaves, str(obj), path)
+    elif isinstance(obj, (tuple, list)) and all(
+        isinstance(x, _SCALAR_TYPES) for x in obj
+    ):
+        # Containers of scalars (e.g. WarmupCosineSpec.milestones) record
+        # their repr instead of the useless "tuple"/"list" class name.
+        _add_leaf(leaves, repr(obj), path)
     else:
-        # Live objects (model, tracker, stream, device, ...) stringify as
-        # their class name so run start never raises on a config that holds
-        # them (release doc, friction points).
+        # Live objects (model, tracker, stream, ...) stringify as their
+        # class name so run start never raises on a config that holds them
+        # (release doc, friction points).
         _add_leaf(leaves, type(obj).__name__, path)
 
 
@@ -105,10 +118,11 @@ def collect_scalars(*roots: tuple[str, object]) -> dict[str, Leaf]:
 
     Recurse dataclass and pydantic BaseModel instances field by field;
     treat Mapping[str, scalar] roots as explicit leaves. Keep
-    str/int/float/bool leaves; stringify other objects as their class name,
-    with None as "None". Raise KeyError naming the colliding paths when two
-    bare leaves carry different values, except for bare keys named in
-    SUFFIX_RULES, which resolve_keys disambiguates.
+    str/int/float/bool leaves; stringify torch devices/dtypes via str()
+    and containers of scalars via repr(); stringify other objects as their
+    class name, with None as "None". Raise KeyError naming the colliding
+    paths when two bare leaves carry different values, except for bare
+    keys named in SUFFIX_RULES, which resolve_keys disambiguates.
 
     The returned dict is keyed by full origin path, so a tabled leaf may
     appear under several origins with differing values.
@@ -122,7 +136,10 @@ def collect_scalars(*roots: tuple[str, object]) -> dict[str, Leaf]:
 def log_params_guarded(params: dict[str, str]) -> None:
     """Log params to the active MLflow run, truncating values to the MLflow
     cap instead of raising. Identical values are a no-op; changed values log
-    a warning and keep the original (params are immutable per run).
+    a warning and keep the original (params are immutable per run). Empty
+    values are skipped with a warning: some MLflow backends reject them
+    ("Param value cannot be empty"), and a rejected log_params would raise
+    out of run start, the one failure mode this guard exists to prevent.
     """
     import mlflow  # lazy so importing this module needs no mlflow
 
@@ -134,6 +151,13 @@ def log_params_guarded(params: dict[str, str]) -> None:
     for raw_key, raw_value in params.items():
         key = str(raw_key)[:MLFLOW_MAX_PARAM_KEY_LENGTH]
         value = str(raw_value)[:MLFLOW_MAX_PARAM_VALUE_LENGTH]
+        if value == "":
+            logger.warning(
+                "param %s has an empty value; skipping it (some MLflow "
+                "backends reject empty param values)",
+                key,
+            )
+            continue
         if key in existing:
             if existing[key] == value:
                 continue

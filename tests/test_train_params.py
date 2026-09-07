@@ -10,6 +10,8 @@ duplication resolved by SUFFIX_RULES.
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 
+import torch
+
 from training.pipeline.train import _is_config_instance, compose_train_params
 from training.tracking import collect_scalars, log_params_guarded, resolve_keys
 from training.tracking.param_keys import SUFFIX_RULES
@@ -31,14 +33,15 @@ class SchedulerSpecStub:
 
 # Live objects mirror the real shapes: the walker stringifies them as
 # type(obj).__name__, so the stub classes are built with __name__ set to
-# the asserted value. runtime.device and strategy.device share one class
-# (both are torch.device in reality), keeping the bare-key values identical.
+# the asserted value. device/dtype use the real torch scalars: the walker
+# records str(device)/str(dtype), which is the actual run information
+# ("cpu", "torch.bfloat16"), not the useless "device"/"dtype" class names.
+# runtime.device and strategy.device carry the same value, keeping the
+# bare-key values identical.
 _MODEL_LIVE = type("MODEL-LIVE", (), {})
 _LOSS_LIVE = type("LOSS-LIVE", (), {})
 _TRACKER_LIVE = type("TRACKER-LIVE", (), {})
 _STREAM_LIVE = type("STREAM-LIVE", (), {})
-_DEVICE_LIVE = type("device", (), {})
-_DTYPE_LIVE = type("dtype", (), {})
 
 
 @dataclass
@@ -47,7 +50,7 @@ class StrategyConfigStub:
     loss_fn: object = field(default_factory=_LOSS_LIVE)
     tracker: object = field(default_factory=_TRACKER_LIVE)
     stream: object = field(default_factory=_STREAM_LIVE)
-    device: object = field(default_factory=_DEVICE_LIVE)
+    device: object = torch.device("cpu")
     optimizer_spec: OptimizerSpecStub = field(default_factory=OptimizerSpecStub)
     scheduler_spec: SchedulerSpecStub = field(default_factory=SchedulerSpecStub)
     examples_per_epoch: int = 14853
@@ -86,8 +89,8 @@ class GraphRecurrentLike:
 
 @dataclass
 class RunContextStub:
-    device: object = field(default_factory=_DEVICE_LIVE)
-    dtype: object = field(default_factory=_DTYPE_LIVE)
+    device: object = torch.device("cpu")
+    dtype: object = torch.bfloat16
     compile_mode: str = ""
     fullgraph: bool = False
     subsample: int | None = None
@@ -107,6 +110,8 @@ def _make_exp(model, examples: int = 42):
         train_loader=loader,
         val_loader=val_loader,
         strategy=SimpleNamespace(config=StrategyConfigStub()),
+        eval_interval=2,
+        checkpoint_interval=5,
     )
 
 
@@ -120,11 +125,13 @@ def test_legacy_four_keys_fold_into_new_scheme():
     keys = _keys(exp)
     # The full emitted key set: bare leaf keys plus the SUFFIX_RULES
     # disambiguation, identical across runs. Live objects appear as their
-    # class names; the milestones tuple stringifies as "tuple".
+    # class names; the milestones tuple records its repr.
     assert keys == {
         # experiment root
         "experiment_name",
         "model_class",
+        "eval_interval",
+        "checkpoint_interval",
         # train/val roots, folded per AD7
         "examples",
         "batch_size",
@@ -199,9 +206,12 @@ def test_strategy_and_runtime_roots_emit_resolved_scalars():
     assert resolved["mat_mul_precision"] == "high"
     assert resolved["epochs"] == "12"  # scheduler spec field
     assert resolved["compile_mode"] == "max-autotune"
+    assert resolved["milestones"] == "(6,)"  # container of scalars, repr form
+    # torch runtime scalars record their actual value, not the class name.
+    assert resolved["device"] == "cpu"
+    assert resolved["dtype"] == "torch.bfloat16"
     # Live objects stringified as class names, surviving without raising.
     assert resolved["model"] == "MODEL-LIVE"
-    assert resolved["device"] == "device"  # torch.device class name, shared
 
 
 def test_class_attribute_config_rides_model_class_only():

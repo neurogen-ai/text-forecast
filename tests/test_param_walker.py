@@ -67,6 +67,31 @@ def test_none_stringifies_as_none():
     )
 
 
+def test_torch_device_and_dtype_stringify_as_values():
+    import torch
+
+    leaves = collect_scalars(
+        ("runtime", {"device": torch.device("cuda:0"), "dtype": torch.bfloat16})
+    )
+    # str() form is the run information; the class-name fallback would
+    # record "device"/"dtype" and distinguish nothing between runs.
+    assert leaves["runtime.device"].value == "cuda:0"
+    assert leaves["runtime.dtype"].value == "torch.bfloat16"
+
+
+def test_scalar_container_stringifies_as_repr():
+    leaves = collect_scalars(
+        ("strategy", {"milestones": (6, 12), "tags": ["a", "b"]})
+    )
+    assert leaves["strategy.milestones"].value == "(6, 12)"
+    assert leaves["strategy.tags"].value == "['a', 'b']"
+
+
+def test_container_with_live_object_still_stringifies_as_class_name():
+    leaves = collect_scalars(("strategy", {"hooks": [_LiveObject()]}))
+    assert leaves["strategy.hooks"].value == "list"
+
+
 def test_mapping_root_is_explicit_leaves():
     leaves = collect_scalars(
         ("train", {"batch_size": 32, "examples": 100}),
@@ -157,6 +182,15 @@ class TestLogParamsGuarded:
         logged_key = next(iter(calls["logged"]))
         assert len(logged_key) == MLFLOW_MAX_PARAM_KEY_LENGTH
         assert len(calls["logged"][logged_key]) == MLFLOW_MAX_PARAM_VALUE_LENGTH
+
+    def test_empty_value_is_skipped_with_warning(self, mlflow_stub, caplog):
+        # RunContext.compile_mode defaults to ""; some MLflow backends
+        # reject empty param values, which would raise out of run start.
+        _, calls = mlflow_stub
+        with caplog.at_level("WARNING"):
+            log_params_guarded({"compile_mode": "", "lr": "0.001"})
+        assert calls["logged"] == {"lr": "0.001"}
+        assert any("empty value" in r.message for r in caplog.records)
 
     def test_requires_active_run(self, monkeypatch):
         stub = types.ModuleType("mlflow")
