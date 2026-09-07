@@ -115,9 +115,19 @@ class VectorStoreDataset(Dataset):
         if config.max_rows is not None and n_corpus > config.max_rows:
             df = df.sample(n=config.max_rows, shuffle=True, seed=0)
 
-        db = torch.tensor(
-            df[config.embedding_col].to_list(), dtype=torch.float32
+        # Explode the list<f32> column into one flat numpy buffer instead of
+        # ``to_list()``: per-element Python floats cost ~24 B each, so a 1M x 768
+        # corpus peaks near 20 GB of boxed objects before the tensor copy, vs
+        # ~3 GB for the raw data. from_numpy needs an owned, writable buffer,
+        # hence the trailing .copy() (also makes it contiguous).
+        n_rows = len(df)
+        flat = (
+            df[config.embedding_col]
+            .list.explode()
+            .to_numpy()
+            .astype("float32", copy=False)
         )
+        db = torch.from_numpy(flat.reshape(n_rows, flat.size // n_rows).copy())
         if config.normalize:
             db = torch.nn.functional.normalize(db, dim=-1)
         self.db: Tensor = db
