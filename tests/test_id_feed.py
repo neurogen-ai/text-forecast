@@ -124,7 +124,14 @@ def test_validation_step_skips_all_nan_fallback_batch() -> None:
 
 
 def test_partially_nan_batch_still_feeds() -> None:
-    """The guard skips only fully-NaN batches; a mixed batch is a real value."""
+    """The guard skips only fully-NaN batches (torch.isnan(batch.id).all()).
+
+    A mixed batch still reaches MetricTracker.process_values, which rejects
+    any feed containing NaN at ERROR and drops it: that is the plan's
+    NaN-mix descope trigger, discharged for current configs by the id
+    survey in the v2.3.1-id-feed commit (no config mixes real and fallback
+    ids inside one batch).
+    """
     strategy, tracker = _make_strategy()
     strategy.training_step(_make_batch([1.0, float("nan")]))
     assert "train_ids" in tracker.feed_names()

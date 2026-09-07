@@ -5,8 +5,8 @@ Every bare ``logger.error(e)`` / ``logger.error(str(e))`` site in
 call, so swallowed failures carry a traceback and name their site. Two
 guards:
 
-1. a ``caplog`` test on one representative site (poisoned metric computation
-   in ``RegregressionTracker.calc_metrics``) asserting ``exc_info`` is
+1. a ``caplog`` test on one representative site (a raising MAE metric in
+   ``RegregressionTracker.calc_metrics``) asserting ``exc_info`` is
    present;
 2. an AST scan asserting no ``logger.error(<bare name>)`` call remains
    anywhere in the package, so future bare handlers fail this test.
@@ -31,22 +31,33 @@ def _make_tracker() -> RegregressionTracker:
     return tracker
 
 
-def _feed(tracker: RegregressionTracker, *, poison: bool) -> None:
+def _feed(tracker: RegregressionTracker) -> None:
     preds = torch.rand(16, 1)
     y = torch.rand(16, 1)
     ids = torch.arange(16).float().unsqueeze(-1)
     tracker.process_values((ids,), ("train_ids",))
-    if poison:
-        # preds containing NaN makes every sklearn/torch metric raise
-        preds = preds + float("nan")
     tracker.process_values((preds,), ("train_preds",))
     tracker.process_values((y,), ("train_y",))
 
 
-def test_poisoned_metric_logs_exception_with_traceback(caplog: pytest.LogCaptureFixture) -> None:
+def test_raising_metric_logs_exception_with_traceback(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatchFixture
+) -> None:
+    """The MAE handler must log via logger.exception with live exc_info.
+
+    Poisoning cannot go through process_values: its NaN rejection empties the
+    store, so calc_metrics would die on the empty-store fallback before
+    reaching the MAE try block. Raise inside the metric instead, which is
+    what the handler exists to report.
+    """
     tracker = _make_tracker()
     tracker._log_plots = lambda **k: None  # plots not under test here
-    _feed(tracker, poison=True)
+    _feed(tracker)
+
+    def _raise(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("poisoned metric")
+
+    monkeypatch.setattr(regression_module, "mean_absolute_error", _raise)
 
     with caplog.at_level("ERROR", logger="training.tracking.regression_tracker"):
         tracker.calc_metrics(prefix="train", step=0)
