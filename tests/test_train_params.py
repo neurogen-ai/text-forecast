@@ -34,8 +34,9 @@ class SchedulerSpecStub:
 # Live objects mirror the real shapes: the walker stringifies them as
 # type(obj).__name__, so the stub classes are built with __name__ set to
 # the asserted value. device/dtype use the real torch scalars: the walker
-# records str(device)/str(dtype), which is the actual run information
-# ("cpu", "torch.bfloat16"), not the useless "device"/"dtype" class names.
+# the walker records str(device)/str(dtype) via the allow-list branch, the
+# actual run values ("cpu", "bfloat16"), not the useless "device"/"dtype"
+# class names.
 # runtime.device and strategy.device carry the same value, keeping the
 # bare-key values identical.
 _MODEL_LIVE = type("MODEL-LIVE", (), {})
@@ -207,9 +208,10 @@ def test_strategy_and_runtime_roots_emit_resolved_scalars():
     assert resolved["epochs"] == "12"  # scheduler spec field
     assert resolved["compile_mode"] == "max-autotune"
     assert resolved["milestones"] == "(6,)"  # container of scalars, repr form
-    # torch runtime scalars record their actual value, not the class name.
+    # torch runtime scalars record their resolved value via the allow-list
+    # branch: dtype shortens to its bare name, device passes through.
     assert resolved["device"] == "cpu"
-    assert resolved["dtype"] == "torch.bfloat16"
+    assert resolved["dtype"] == "bfloat16"
     # Live objects stringified as class names, surviving without raising.
     assert resolved["model"] == "MODEL-LIVE"
 

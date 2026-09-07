@@ -73,10 +73,10 @@ def test_torch_device_and_dtype_stringify_as_values():
     leaves = collect_scalars(
         ("runtime", {"device": torch.device("cuda:0"), "dtype": torch.bfloat16})
     )
-    # str() form is the run information; the class-name fallback would
-    # record "device"/"dtype" and distinguish nothing between runs.
+    # dtype shortens to its bare name via the allow-list branch; device
+    # has no module prefix and passes through as-is.
     assert leaves["runtime.device"].value == "cuda:0"
-    assert leaves["runtime.dtype"].value == "torch.bfloat16"
+    assert leaves["runtime.dtype"].value == "bfloat16"
 
 
 def test_scalar_container_stringifies_as_repr():
