@@ -65,6 +65,10 @@ class MetricTracker:
         self.stores: dict[str, list[Tensor]] = {
             name: [] for name in self.store_names
         }
+        # Latch for the empty-store warning in _gather_store: one WARNING per
+        # store name per tracker instance, DEBUG afterwards. Not reset by
+        # clear(); the latch is diagnostics state, not gathered data.
+        self._warned_stores: set[str] = set()
 
         self._init_metric_stores()
 
@@ -142,7 +146,11 @@ class MetricTracker:
             self.stores[store_name] = []
             return all_values
         else:
-            logger.error(f"Store {store_name} contains no values, resetting")
+            if store_name not in self._warned_stores:
+                logger.warning(f"Store {store_name} contains no values, resetting")
+                self._warned_stores.add(store_name)
+            else:
+                logger.debug(f"Store {store_name} contains no values, resetting")
             self.stores[store_name] = []
             return torch.tensor(float("nan"))
 
@@ -183,7 +191,7 @@ class MetricTracker:
                 save_kwargs={"dpi": 72},
             )
         except Exception as e:
-            logger.error(e)
+            logger.exception("plot rendering failed: ROC curve in _log_plots")
 
         try:
             pr_plot = PrecisionRecallDisplay.from_predictions(
@@ -197,7 +205,7 @@ class MetricTracker:
                 save_kwargs={"dpi": 72},
             )
         except Exception as e:
-            logger.error(e)
+            logger.exception("plot rendering failed: precision-recall curve in _log_plots")
 
     def calc_metrics(
         self,
@@ -216,7 +224,7 @@ class MetricTracker:
             y_true = self._gather_store(store_name=f"{prefix}_y")
 
         except Exception as e:
-            logger.error(e)
+            logger.exception("logits store gather failed in calc_metrics")
             return
 
         if preds.size(0) != y_true.size(0):
@@ -229,7 +237,7 @@ class MetricTracker:
             entropy = norm_entropy_loss(probs)
             self.log_metric(f"{prefix}_entropy", entropy.item(), preds.shape[0])
         except Exception as e:
-            logger.error(e)
+            logger.exception("entropy metric computation failed in calc_metrics")
 
     def _aggregate_metrics(self) -> dict[str, float]:
         "Aggregates metrics stored as named tuples"
@@ -241,7 +249,7 @@ class MetricTracker:
                 if not math.isnan(score):
                     aggregate_metrics[metric] = round(score, 6)
             except Exception as e:
-                logger.error(e)
+                logger.exception("metric aggregation to DataFrame failed in _aggregate_metrics")
         aggregate_metrics = {
             k: v for k, v in aggregate_metrics.items() if not math.isnan(v)
         }
