@@ -12,6 +12,7 @@ setup.py
 *.obj
 
 # Other
+worktrees/
 tmp/
 .handoff
 src/models/trace.json
