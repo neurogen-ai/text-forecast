@@ -111,7 +111,8 @@ class VectorStoreDataset(Dataset):
         lf = lf.drop_nulls(needed)
 
         df = lf.collect(engine="streaming").select(needed)
-        if config.max_rows is not None and len(df) > config.max_rows:
+        n_corpus = len(df)
+        if config.max_rows is not None and n_corpus > config.max_rows:
             df = df.sample(n=config.max_rows, shuffle=True, seed=0)
 
         db = torch.tensor(
@@ -120,7 +121,21 @@ class VectorStoreDataset(Dataset):
         if config.normalize:
             db = torch.nn.functional.normalize(db, dim=-1)
         self.db: Tensor = db
-        logger.info(f"{config.name}: vector db {tuple(db.shape)}")
+        # One line carrying the corpus row count (pre-sampling, so silent
+        # max_rows subsampling is visible in the startup log) plus the
+        # effective t-bounds window when the store config sets one.
+        max_rows_note = (
+            f" (max_rows={config.max_rows})" if config.max_rows is not None else ""
+        )
+        window_note = (
+            f", window [{config.t_start}, {config.t_end})"
+            if config.t_start is not None or config.t_end is not None
+            else ""
+        )
+        logger.info(
+            f"{config.name}: vector db {tuple(db.shape)}, {n_corpus} corpus"
+            f" rows{max_rows_note}{window_note}"
+        )
 
         self.dates: Tensor | None = None
         if config.time_col is not None:

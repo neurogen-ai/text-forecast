@@ -32,7 +32,7 @@ Target: binary threshold on citation count; output is logits only, consumed
 by ``BinaryCrossEntropyLoss`` / ``ClassificationStrategy``.
 """
 
-from typing import NamedTuple, Protocol
+from typing import Literal, NamedTuple, Protocol
 
 import logging
 
@@ -52,6 +52,12 @@ from utils import component
 from .protocols import Model
 
 
+# Fixed random-minority ratio for the "mixed" candidate strategy (AD4: one
+# stated use case, no tunable knob; revisit only when a second use case
+# exists).
+MIXED_RANDOM_RATIO = 0.25
+
+
 class RetrievalModelConfig(BaseModel):
     n_heads: int
     n_layers: PositiveInt
@@ -66,6 +72,11 @@ class RetrievalModelConfig(BaseModel):
     max_len: PositiveInt  # padded token length of the target sequence
     scale: PositiveFloat = 0.07  # CLaRa temperature tau (scores / max(tau, eps))
     rope_base: PositiveFloat = 10_000.0
+    # Stage-1 pool selection strategy (v2.4.0 proposal, AD2): "nearest" is
+    # exactly the pre-2.4 exact masked top-k; "random" is a seeded
+    # Gumbel-perturbed top-k over the eligible rows; "mixed" is one pool of
+    # nearest majority + Gumbel-random minority at MIXED_RANDOM_RATIO.
+    candidate_strategy: Literal["nearest", "random", "mixed"] = "nearest"
 
     @model_validator(mode="after")
     def _check_candidates(self) -> "RetrievalModelConfig":
@@ -252,6 +263,7 @@ class VectorRetriever(nn.Module):
     """
 
     _warned_no_candidates = False
+    _warned_no_dates_strategy = False
 
     def __init__(
         self,
@@ -262,9 +274,11 @@ class VectorRetriever(nn.Module):
         dates: Tensor | None = None,
         delta_years: float = 0.0,
         dtype: torch.dtype = torch.float32,
+        candidate_strategy: str = "nearest",
     ):
         super().__init__()
         self.top_k = top_k
+        self.candidate_strategy = candidate_strategy
         self._store_search = store_search
         self.compute_dtype = dtype
         # The db buffer is stored in the compute dtype so the stage-2 pool
@@ -343,8 +357,30 @@ class VectorRetriever(nn.Module):
             )
         return cutoff
 
+    @staticmethod
+    def _batch_seed(ids: Tensor) -> int:
+        """Deterministic per-batch seed folded from the batch's example ids.
+
+        Pool selection must be a pure function of (batch ids, corpus state)
+        so a resumed run (whose checkpoint payload carries no RNG state,
+        verified for src/training/checkpointing/mlflow_store.py) selects
+        the same pools for the same batches. Python's ``hash()`` is
+        salted per process, so the fold uses wrapping int64 arithmetic
+        (a splitmix-style multiply-add) on the ids themselves; torch
+        integer overflow wraps deterministically on every backend.
+        """
+        ids64 = ids.detach().reshape(-1).long()
+        mixed = ids64 * 6364136223846793005 + 1442695040888963407
+        return int(mixed.sum().item()) % (2**63 - 1)
+
     @torch.no_grad()
-    def search(self, q: Tensor, n_candidates: int, dates: Tensor | None = None) -> Tensor:
+    def search(
+        self,
+        q: Tensor,
+        n_candidates: int,
+        dates: Tensor | None = None,
+        ids: Tensor | None = None,
+    ) -> Tensor:
         """(B, N, D) -> (B, N, n_candidates) stage-1 pool row indices.
 
         ``dates`` is ``(B,)`` float32 days-since-epoch values, or None for
@@ -355,9 +391,34 @@ class VectorRetriever(nn.Module):
         with a db smaller than ``n_candidates``, a faiss index would return
         ``-1`` labels for the missing slots (which index-wrap to the last
         row), so that corner raises instead.
+
+        ``ids`` is ``(B,)`` example ids, required for the "random" and
+        "mixed" strategies (the Gumbel seed is folded from them, so the
+        pool is reproducible across checkpoint resume). Strategy scope
+        (AD1): random/mixed apply ONLY to the date-filtered exact path
+        below. On the no-dates path they fall back to "nearest" with a
+        once-only warning: the FAISS store path returns indices only (no
+        scores to perturb), and re-scoring there would open a second
+        search-semantics code path beside the one 2.3 deliberately
+        unified. "nearest" is byte-identical to the pre-2.4 behaviour on
+        both paths.
         """
         B, N, _ = q.shape
         if dates is None:
+            # Strategy scope (AD1, see docstring): random/mixed need the
+            # date-masked exact score matrix; on the no-dates path (FAISS
+            # store or plain matmul top-k) they degrade to "nearest".
+            if (
+                self.candidate_strategy != "nearest"
+                and not VectorRetriever._warned_no_dates_strategy
+            ):
+                logging.getLogger(__name__).warning(
+                    "candidate_strategy=%r has no effect without per-example "
+                    "dates (the no-dates path has no masked score matrix to "
+                    "perturb); falling back to nearest",
+                    self.candidate_strategy,
+                )
+                VectorRetriever._warned_no_dates_strategy = True
             if self.db.size(0) < n_candidates:
                 raise ValueError(
                     f"vector db has {self.db.size(0)} rows but "
@@ -386,7 +447,55 @@ class VectorRetriever(nn.Module):
         k_pool = min(n_candidates, int(allowed.sum(dim=1).min().item()))
         scores = flat @ self.db.float().T  # (B*N, M), fp32 for exact top-k
         scores = scores.masked_fill(~allowed, float("-inf"))
-        _, idx = torch.topk(scores, k=k_pool, dim=-1)
+        strategy = self.candidate_strategy
+        if strategy == "nearest":
+            _, idx = torch.topk(scores, k=k_pool, dim=-1)
+            return idx.reshape(B, N, k_pool)
+        if ids is None:
+            raise ValueError(
+                f"candidate_strategy={strategy!r} requires example ids "
+                "(the Gumbel seed is folded from the batch's ids so pool "
+                "selection survives checkpoint resume); thread TokenBatch.id "
+                "into the retriever"
+            )
+        # Seeded Gumbel noise (AD3): a pure function of the batch ids, so
+        # the pool is identical for the same batch on resume. Perturbing
+        # the masked fp32 scores reuses torch.topk (no multinomial: no
+        # graph-break risk and no per-row host sync); -inf slots stay -inf
+        # under the perturbation, so pool purity is preserved exactly.
+        gen = torch.Generator(device="cpu")
+        gen.manual_seed(self._batch_seed(ids))
+        gumbel = -torch.log(
+            -torch.log(
+                torch.rand(
+                    scores.shape, generator=gen, dtype=torch.float32
+                ).to(scores.device)
+                + 1e-12
+            )
+            + 1e-12
+        )
+        if strategy == "random":
+            _, idx = torch.topk(scores + gumbel, k=k_pool, dim=-1)
+            return idx.reshape(B, N, k_pool)
+        # "mixed" (AD4): ONE pool of width k_pool - nearest majority plus
+        # a Gumbel-random minority at the fixed MIXED_RANDOM_RATIO, not two
+        # concatenated pools. If the pool barely fits top_k there is no
+        # room for a minority and the pool degrades to pure nearest.
+        n_rand = min(int(k_pool * MIXED_RANDOM_RATIO), k_pool - self.top_k)
+        if n_rand <= 0:
+            _, idx = torch.topk(scores, k=k_pool, dim=-1)
+            return idx.reshape(B, N, k_pool)
+        n_nearest = k_pool - n_rand
+        nearest = torch.topk(scores, k=n_nearest, dim=-1).indices  # (B*N, n_nearest)
+        nearest_mask = torch.zeros_like(allowed)
+        nearest_mask.scatter_(1, nearest, True)
+        # Random minority: best perturbed picks outside the nearest set.
+        fill = torch.topk(
+            (scores + gumbel).masked_fill(nearest_mask, float("-inf")),
+            k=n_rand,
+            dim=-1,
+        ).indices
+        idx = torch.cat([nearest, fill], dim=-1)
         return idx.reshape(B, N, k_pool)
 
     def forward(
@@ -395,13 +504,15 @@ class VectorRetriever(nn.Module):
         scale: float,
         dates: Tensor | None = None,
         n_candidates: int | None = None,
+        ids: Tensor | None = None,
     ) -> Tensor:
         """(B, N, D) -> selected vectors (B, N, top_k, D).
 
         CLaRa straight-through top-k over the stage-1 candidate pool
         (Algorithm 1 of He et al., 2026). Forward value: exactly the
         hard-picked pool vectors. Backward: softmax gradient over the
-        masked pool, reaching ``q``.
+        masked pool, reaching ``q``. ``ids`` (the batch's example ids) is
+        forwarded to :meth:`search` for the seeded random/mixed strategies.
         """
         B, N, _ = q.shape
         C = n_candidates if n_candidates is not None else self.top_k
@@ -410,7 +521,7 @@ class VectorRetriever(nn.Module):
                 f"n_candidates ({C}) must be >= top_k ({self.top_k})"
             )
         # Algorithm 1, input: stage-1 pool over the (masked) scores.
-        idx = self.search(q, C, dates)  # (B, N, pool), no grad
+        idx = self.search(q, C, dates, ids)  # (B, N, pool), no grad
         C = idx.size(-1)  # min(n_candidates, db rows)
         if idx.size(-1) < self.top_k:
             raise ValueError(
@@ -561,6 +672,7 @@ class RetrievalForecast(nn.Module, Model[RetrievalModelConfig, TokenBatch, Outpu
         self.retriever = VectorRetriever(
             db, config.top_k, store_search, device,
             dates=store_dates, delta_years=delta_years, dtype=dtype,
+            candidate_strategy=config.candidate_strategy,
         )
 
         # Shared position table across both padded sequences.
@@ -603,7 +715,8 @@ class RetrievalForecast(nn.Module, Model[RetrievalModelConfig, TokenBatch, Outpu
         # has length N * top_k.
         q = self.embedder(batch.x, batch.mask)  # (B, N, D)
         retrieved = self.retriever(
-            q, cfg.scale, batch.date, n_candidates=cfg.n_candidates
+            q, cfg.scale, batch.date, n_candidates=cfg.n_candidates,
+            ids=batch.id,
         )
         B, N, K, D = retrieved.shape
         retrieved = retrieved.reshape(B, N * K, D)

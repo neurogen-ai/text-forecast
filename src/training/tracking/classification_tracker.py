@@ -94,7 +94,7 @@ class ClassificationTracker(MetricTracker):
                 save_kwargs={"dpi": 72},
             )
         except Exception as e:
-            logger.exception("plot rendering failed: ROC curve in _log_plots")
+            logger.error(e)
 
             # OutPut Probs histogram
         try:
@@ -155,7 +155,7 @@ class ClassificationTracker(MetricTracker):
                 save_kwargs={"dpi": 72},
             )
         except Exception as e:
-            logger.exception("legend proportion computation failed in _log_plots")
+            logger.error(str(e))
 
     @override
     def calc_metrics(
@@ -181,7 +181,7 @@ class ClassificationTracker(MetricTracker):
             mae = mean_absolute_error(y_true_one_hot, probs.squeeze(-1))
             self.log_metric(f"{prefix}_MAE", mae, n_examples)
         except Exception as e:
-            logger.exception("one-hot encoding failed in calc_metrics")
+            logger.error(e)
         try:
             roc_auc = roc_auc_score(  # pyright: ignore[reportUnknownVariableType]
                 y_true.squeeze(1).long().numpy(),
@@ -191,7 +191,7 @@ class ClassificationTracker(MetricTracker):
             )
             self.log_metric(f"{prefix}_roc_auc", roc_auc, n_examples)  # pyright: ignore[reportArgumentType]
         except Exception as e:
-            logger.exception("roc_auc metric computation failed in calc_metrics")
+            logger.error(e)
 
         if self.n_out == 1:
             # binary case
@@ -209,7 +209,7 @@ class ClassificationTracker(MetricTracker):
                 f"{prefix}_balanced_accuracy", balanced_accuracy, n_examples
             )  # pyright: ignore[reportArgumentType]
         except Exception as e:
-            logger.exception("balanced accuracy metric computation failed in calc_metrics")
+            logger.error(e)
         try:
             recall = recall_score(
                 y_true.long().numpy(),
@@ -218,7 +218,7 @@ class ClassificationTracker(MetricTracker):
             )
             self.log_metric(f"{prefix}_recall", recall, n_examples)
         except Exception as e:
-            logger.exception("recall metric computation failed in calc_metrics")
+            logger.error(e)
         try:
             precision = precision_score(
                 y_true.long().numpy(),
@@ -227,4 +227,4 @@ class ClassificationTracker(MetricTracker):
             )
             self.log_metric(f"{prefix}_precision", precision, n_examples)
         except Exception as e:
-            logger.exception("precision metric computation failed in calc_metrics")
+            logger.error(e)

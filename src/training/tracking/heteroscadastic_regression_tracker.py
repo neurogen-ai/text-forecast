@@ -257,20 +257,20 @@ class HSRegregressionTracker(MetricTracker):
             sigma = torch.mean(sigmas).item()
             self.log_metric(f"{prefix}_sigma", sigma, n_examples)
         except Exception as e:
-            logger.exception("mean sigma computation failed in calc_metrics")
+            logger.error(e)
 
         try:
             mae = mean_absolute_error(y_true.numpy(), preds.numpy())
             self.log_metric(f"{prefix}_MAE", mae, n_examples)
         except Exception as e:
-            logger.exception("MAE metric computation failed in calc_metrics")
+            logger.error(e)
 
         try:
             mae = torch.abs(y_true - preds)
             wape = ((torch.sum(mae) / torch.sum(y_true)).item()) * 100
             self.log_metric(f"{prefix}_WAPE", wape, n_examples)
         except Exception as e:
-            logger.exception("WAPE metric computation failed in calc_metrics")
+            logger.error(e)
 
         try:
             upper = preds + (sigmas * 3)
@@ -279,4 +279,4 @@ class HSRegregressionTracker(MetricTracker):
             prop_within = torch.mean(within.float()).item()
             self.log_metric(f"{prefix}_3sd_capture", prop_within, n_examples)
         except Exception as e:
-            logger.exception("3sd capture metric computation failed in calc_metrics")
+            logger.error(e)

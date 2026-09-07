@@ -65,10 +65,6 @@ class MetricTracker:
         self.stores: dict[str, list[Tensor]] = {
             name: [] for name in self.store_names
         }
-        # Latch for the empty-store warning in _gather_store: one WARNING per
-        # store name per tracker instance, DEBUG afterwards. Not reset by
-        # clear(); the latch is diagnostics state, not gathered data.
-        self._warned_stores: set[str] = set()
 
         self._init_metric_stores()
 
@@ -137,6 +133,11 @@ class MetricTracker:
 
         if len(store) > 0:
             all_values: Tensor = torch.cat(store)
+            # numpy has no bfloat16; convert bf16 stores to fp32 so every
+            # downstream .numpy() call site (metrics, plots, export) works.
+            # Other dtypes (fp32/fp64/fp16/integer) pass through unchanged.
+            if all_values.dtype == torch.bfloat16:
+                all_values = all_values.float()
             if self.export and self.export_loc is not None:
                 logger.debug(
                     f"Exporting {store_name} store to {self.export_loc.resolve()}"
@@ -146,11 +147,7 @@ class MetricTracker:
             self.stores[store_name] = []
             return all_values
         else:
-            if store_name not in self._warned_stores:
-                logger.warning(f"Store {store_name} contains no values, resetting")
-                self._warned_stores.add(store_name)
-            else:
-                logger.debug(f"Store {store_name} contains no values, resetting")
+            logger.error(f"Store {store_name} contains no values, resetting")
             self.stores[store_name] = []
             return torch.tensor(float("nan"))
 
@@ -191,7 +188,7 @@ class MetricTracker:
                 save_kwargs={"dpi": 72},
             )
         except Exception as e:
-            logger.exception("plot rendering failed: ROC curve in _log_plots")
+            logger.error(e)
 
         try:
             pr_plot = PrecisionRecallDisplay.from_predictions(
@@ -205,7 +202,7 @@ class MetricTracker:
                 save_kwargs={"dpi": 72},
             )
         except Exception as e:
-            logger.exception("plot rendering failed: precision-recall curve in _log_plots")
+            logger.error(e)
 
     def calc_metrics(
         self,
@@ -224,7 +221,7 @@ class MetricTracker:
             y_true = self._gather_store(store_name=f"{prefix}_y")
 
         except Exception as e:
-            logger.exception("logits store gather failed in calc_metrics")
+            logger.error(e)
             return
 
         if preds.size(0) != y_true.size(0):
@@ -237,7 +234,7 @@ class MetricTracker:
             entropy = norm_entropy_loss(probs)
             self.log_metric(f"{prefix}_entropy", entropy.item(), preds.shape[0])
         except Exception as e:
-            logger.exception("entropy metric computation failed in calc_metrics")
+            logger.error(e)
 
     def _aggregate_metrics(self) -> dict[str, float]:
         "Aggregates metrics stored as named tuples"
@@ -249,7 +246,7 @@ class MetricTracker:
                 if not math.isnan(score):
                     aggregate_metrics[metric] = round(score, 6)
             except Exception as e:
-                logger.exception("metric aggregation to DataFrame failed in _aggregate_metrics")
+                logger.error(e)
         aggregate_metrics = {
             k: v for k, v in aggregate_metrics.items() if not math.isnan(v)
         }
