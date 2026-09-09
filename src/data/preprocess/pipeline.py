@@ -129,7 +129,9 @@ def _run_embed(
         lf.drop_nulls(step.cols)
         .with_columns(
             [
-                pl.lit(spec.bos_token) + pl.col(col) + pl.lit(spec.eos_token)
+                (
+                    pl.lit(spec.bos_token) + pl.col(col) + pl.lit(spec.eos_token)
+                ).alias(col)
                 for col in step.cols
             ]
         )
