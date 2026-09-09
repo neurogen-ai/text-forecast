@@ -37,11 +37,23 @@ class ClassificationStrategy(BaseStrategy[TokenBatch]):
         self.stream_sync()
         return cast(TokenBatch, batch_type(*moved))  # type: ignore[call-overload]
 
+    def _feed_ids(self, batch: TokenBatch, store_name: str) -> None:
+        """Feed an id store, skipping NaN-fallback batches.
+
+        ``return_id=False`` datasets emit scalar-NaN ids as a config fact, not
+        an error, so both id feeds skip a fully-NaN batch instead of tripping
+        the tracker's NaN rejection (design/tracking-stores.md rule 2).
+        """
+        if torch.isnan(batch.id).all():
+            return
+        self.tracker.process_values((batch.id.clone(),), (store_name,))
+
     def training_step(self, batch: TokenBatch) -> float:
         """One training step: forward, backward, optimizer step, logging."""
         self.model.train()
 
         self.tracker.process_values((batch.y.clone(),), ("train_y",))
+        self._feed_ids(batch, "train_ids")
         batch = self.move_to_device(batch)
 
         out = cast(_ForwardOutput, self.model.forward(batch))
@@ -86,7 +98,7 @@ class ClassificationStrategy(BaseStrategy[TokenBatch]):
         self.model.eval()
 
         self.tracker.process_values((batch.y.clone(),), ("val_y",))
-        self.tracker.process_values((batch.id.clone(),), ("val_ids",))
+        self._feed_ids(batch, "val_ids")
         batch = self.move_to_device(batch)
 
         with torch.no_grad():
