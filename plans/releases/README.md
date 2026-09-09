@@ -19,7 +19,7 @@ contract change.
 | [2.3](2.3.md) | Retrieval-forecast model, vector store dataset, experiment config | implemented (spec written retroactively) |
 | [2.3.1](2.3.1.md) | MLflow logging fixes: train_ids feed, latched empty-store warning, eval tracking-URI order, tracking logger.exception swaps | folded into 2.4.0 (the implementing branches are cut on top of the 2.4.0 work); scope note in [v2.4.0 and v2.4.1.md](v2.4.0%20and%20v2.4.1.md) |
 | [2.4](v2.4.0%20and%20v2.4.1.md) | Expanded query search strategy: candidate pool selection (nearest/random/mixed), independent corpus scope, compute dtype plumbing | ratified 2026-09-06; release doc written, candidate-strategy build outstanding |
-| [2.4.2](v2.4.2.md) | Training-hang and id-feed fixes: synchronous MLflow logging, train_ids feed with NaN guard, latched empty-store warning | ratified 2026-09-07; owner venv suite + smoke test pending |
+| [2.4.2](v2.4.2.md) | Id-feed and tracking-store fixes: train_ids feed with NaN guard, latched empty-store warning | ratified 2026-09-07; synchronous-logging item struck 2026-09-09 (hang reproduced with it); owner venv suite + smoke test pending |
 | [2.4.3](v2.4.3.md) | Candidate-strategy Gumbel sampling: on-device noise draw (random/mixed search speed), backend-only GUMBEL_TAU smoothing constant | implemented 2026-09-08; owner vetting pending, tau not config-exposed |
 | [2.5.0](2.5.0.md) | Modal runtime tidy-up: dedupe config/log noise, inline wrappers, single-source EVAL naming | drafted; [implementation plan](implementation/v2.5.0.md) written (branches A–F), not started |
 | [2.6](2.6.md) | Production deployment hardening | not started |
