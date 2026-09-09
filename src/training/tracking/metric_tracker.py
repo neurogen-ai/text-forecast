@@ -65,6 +65,10 @@ class MetricTracker:
         self.stores: dict[str, list[Tensor]] = {
             name: [] for name in self.store_names
         }
+        # Latch for the empty-store warning in _gather_store: one WARNING per
+        # store name per tracker instance, DEBUG afterwards. Not reset by
+        # clear(); the latch is diagnostics state, not gathered data.
+        self._warned_stores: set[str] = set()
 
         self._init_metric_stores()
 
@@ -147,7 +151,11 @@ class MetricTracker:
             self.stores[store_name] = []
             return all_values
         else:
-            logger.error(f"Store {store_name} contains no values, resetting")
+            if store_name not in self._warned_stores:
+                logger.warning(f"Store {store_name} contains no values, resetting")
+                self._warned_stores.add(store_name)
+            else:
+                logger.debug(f"Store {store_name} contains no values, resetting")
             self.stores[store_name] = []
             return torch.tensor(float("nan"))
 
