@@ -268,14 +268,14 @@ def run_preprocess_pipeline(job: PreprocessJob, runtime: Runtime) -> DataSource:
             logger=logger,
         )
         for step in job.steps:
-            rows_before = _measure_lf(lf, True)
-            lf = HANDLERS[type(step)](lf, step, ctx)
-            rows_after = _measure_lf(lf, True)
-            delta = f"{type(step).__name__} row delta {rows_after - rows_before:,.0f}"
             if isinstance(step, (CleanStep, DropNaStep)):
+                rows_before = _measure_lf(lf, True)
+                lf = HANDLERS[type(step)](lf, step, ctx)
+                rows_after = _measure_lf(lf, True)
+                delta = f"{type(step).__name__} row delta {rows_after - rows_before:,.0f}"
                 logger.info(delta)
             else:
-                logger.debug(delta)
+                lf = HANDLERS[type(step)](lf, step, ctx)
 
         if job.dry_run:
             print(lf.collect())
