@@ -3,6 +3,11 @@
 Forward-looking release plans live here, one file per version. Completed plans
 move to `archive/` untouched. Ops guides belong in `docs/`.
 
+> **2026-09 audit note:** a renumbering accident (commit `e713dfc`) had left
+> release/implementation file bodies shifted one filename slot; this was
+> repaired by moving each body to the filename matching its plan number. All
+> cross-references were updated in the same pass.
+
 ## Numbering convention
 
 Plan numbers match release versions. Minor releases may contain multiple
@@ -22,10 +27,10 @@ contract change.
 | [2.4.2](v2.4.2.md) | Id-feed and tracking-store fixes: train_ids feed with NaN guard, latched empty-store warning | ratified 2026-09-07; synchronous-logging item struck 2026-09-09 (hang reproduced with it); owner venv suite + smoke test pending |
 | [2.4.3](v2.4.3.md) | Candidate-strategy Gumbel sampling: on-device noise draw (random/mixed search speed), backend-only GUMBEL_TAU smoothing constant | implemented 2026-09-08; owner vetting pending, tau not config-exposed |
 | [2.4.4](v2.4.4.md) | Preprocess embed/tokenise step execution restored; multi-column embed literal-alias fix | implemented 2026-09-09; regeneration of prior embed:/tokenise: datasets required |
-| [2.5.0](2.5.0.md) | Modal runtime tidy-up: dedupe config/log noise, inline wrappers, single-source EVAL naming | drafted; [implementation plan](implementation/v2.5.0.md) written (branches A–F), not started |
+| [2.5.0](2.5.0.md) | Modal runtime tidy-up: dedupe config/log noise, inline wrappers, single-source EVAL naming; also carries the preprocess id-skip resume slice (proposal v2.11) and the eval-compile/tokenise-path fixes from the 2026-09 audit | drafted; [implementation plan](implementation/v2.5.0.md) written (branches A–F), not started |
 | [2.6](2.6.md) | Production deployment hardening | not started |
 | [2.7](2.7.md) | Distributed GPU training/eval | not started |
-| [2.8](2.8.md) | Remote progress tracking for cloud runs | reconstructed after file loss; review before executing (references renumbered 2.6/2.7) |
+| [2.8](2.8.md) | Remote progress tracking for cloud runs | reconstructed after file loss (original lost 2026-06-05); review before executing |
 
 ## Archive
 
