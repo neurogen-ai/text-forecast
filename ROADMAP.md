@@ -13,16 +13,7 @@ dry run to close out ([plan 2.1](plans/releases/archive/2.1.md)).
 <summary><b>v2.x — Cloud runtime maturity &amp; production readiness</b></summary>
 
 > <details>
-> <summary><b>v2.2 — CLI launch speed</b></summary>
->
-> - Defer heavy third-party imports (torch, transformers, mlflow, seaborn, sklearn) out of module scope; `--help` and every dispatch boundary become responsive
-> - Modal client paths never import torch
-> - Status: drafted; implementation plan written (branches A–E), not started
->
-> </details>
->
-> <details>
-> <summary><b>v2.5.0 — Modal runtime tidy-up &amp; preprocess resume</b></summary>
+> <summary><b>v2.5 — Modal runtime tidy-up &amp; preprocess resume</b></summary>
 >
 > - Cut Modal dispatch logging to one INFO line per boundary; inline trivial wrappers
 > - Single-source volume labels from `[runtime.modal]` (delete the hardcoded constant)
@@ -64,6 +55,15 @@ dry run to close out ([plan 2.1](plans/releases/archive/2.1.md)).
 >
 > - `Reporter` interface replaces the `progress=None` guards: spawned Modal runs batch progress updates and flush them to MLflow, so long detached train/eval runs are followable while executing
 > - Status: plan file reconstructed after the original was lost (2026-06-05) — review before executing
+>
+> </details>
+>
+> <details>
+> <summary><b>v2.9 — CLI launch speed</b></summary>
+>
+> - Defer heavy third-party imports (torch, transformers, mlflow, seaborn, sklearn) out of module scope; `--help` and every dispatch boundary become responsive
+> - Modal client paths never import torch
+> - Status: drafted; implementation plan written (branches A–E), not started
 >
 > </details>
 

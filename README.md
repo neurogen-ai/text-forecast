@@ -54,9 +54,9 @@ shipped releases are itemised in [CHANGELOG.md](CHANGELOG.md). In brief:
   strategies, corpus scope, compute dtypes, Gumbel sampling) plus
   preprocess embed/tokenise fixes.
 * **Active next** (per [`plans/releases/README.md`](plans/releases/README.md)):
-  2.2 CLI launch speed (lazy heavy imports), 2.5.0 Modal runtime tidy-up and
-  preprocess resume, 2.6 production hardening, 2.7 distributed training,
-  2.8 remote progress tracking — all drafted or not yet started.
+  2.5 Modal runtime tidy-up and preprocess resume, 2.6 production hardening,
+  2.7 distributed training, 2.8 remote progress tracking, 2.9 CLI launch
+  speed (lazy heavy imports) — all drafted or not yet started.
 
 # 3. Project Structure
 ```text
