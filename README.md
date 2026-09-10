@@ -10,7 +10,7 @@ Python, software engineering, and deep learning.
 
 The core training loop and data pre-processing is driven entirely by
 CLI and integrates directly with MLflow to track experiments and compare
-iterations iterations efficiently. Since v2.0 it is a hybrid local/cloud system:
+iterations efficiently. Since v2.0 it is a hybrid local/cloud system:
 each experiment is a single self-contained Python module that instantiates its
 own models, datasets, samplers, plain torch DataLoaders, strategy, tracker, and
 checkpoint processor, and every app runs either locally or on Modal GPUs with
@@ -34,7 +34,7 @@ Data pre-processing CLI and custom PyTorch Datasets/Loaders forming a flexible E
 
 * **MLOps:** MLflow (tracking), Modal (Deployment), Scikit-Learn (metric calculation)
 
-* **Data:** Polars (predicate pushdown loading), Polars (multi-worker serving)
+* **Data:** Polars (predicate pushdown loading, multi-worker serving)
 
 * **Validation:** Pydantic (Type safe model config schemas)
 
@@ -42,218 +42,21 @@ Data pre-processing CLI and custom PyTorch Datasets/Loaders forming a flexible E
 
 # 2. Road-map
 
-## Completed
+The full version-by-version breakdown lives in [ROADMAP.md](ROADMAP.md), and
+shipped releases are itemised in [CHANGELOG.md](CHANGELOG.md). In brief:
 
-<details> 
-<summary> <b>Expand List</b></summary> 
-
-> ## v0.2
-> <details>
-> <summary><b>v0.2.0 Data pre-processing CLI</b></summary>
->
-> - Standardise data pre-processing notebook into separate functions.
-> - Orchestrate pre-processing functions in main loop.
-> - CLI control via Typer app, functions induced/skipped via option flags.
->
-> </details>
-
-
-> ## v0.3
-> <details>
-> <summary><b>v0.3.0 Dataloader Flexibility</b></summary>
-> 
-> - Support concatenation of multiple string/token columns when serving examples from dataloader.
-> 
-> </details>
-
-
-> ## v0.4 
->
-> <details>
-> <summary><b>v0.4.0 Eval CLI</b></summary>
-> 
-> - CLI app for evaluating models
-> - Config driven with optional CLI overrides 
-> - Temporal scrub with variable intervals and MLflow tracking
-> - JSON data export for website historical performance graphs
-> 
-> </details>
-> 
-> <details>
-> <summary><b>v0.4.1 Metric Tracker Generalisation</b></summary>
-> 
-> - Generalise & simplify metric tracker methods/initialisation
-> - Generalised parameter init function & metric calc functions responsive to store name prefix
-> 
-> </details>
-> 
-> 
-> <details>
-> <summary><b>v0.4.2 Standardise cross-app arg parsing</b></summary>
-> 
->- Standardise start/end date arg parsing across apps
->
-> </details>
->
->
-> <details>
-> <summary><b>v0.4.3 Update data loading & handling</b></summary>
->
-> - Specialised dataset load funcs, more efficient mem use
-> - Ignore extra cols (e.g index) during parquet data load
-> - Add no. of examples in dataset to train/eval metric/param logging 
->
-> </details>
->
-> <details>
-> <summary><b>v0.4.4 Enhanced Metric calculation</b></summary>
->
-> - Add 'best threshold' metric calculation for accuracy, also recording precicion/recall at that threshold
-> - PR & ROC AUC charts logged as mlflow artifacts during evaluation step
-> 
-> </details>
->
-> <details>
-> <summary><b>v0.4.5 Preprocess &amp Train app upgrade</b></summary>
->
-> - Add metadata export, drop count logging, more user warnings, to pre-processing 
-> - Cleaning has more granular control with column specific 'levels', tidied argument names
-> - Cleaning split into 'drop' and 'clear' (replace with null)
-> - License based filtering and clearing added to clean 
-> - Tokenise step leaves empty list for nulls instead of filling nulls with empty string prior to tokenisation
-> - Pre-processing sped up by partitioning via filter instead of slicing
-> - Log model file as mlflow arifact 
->
-> </details>
-
-
-> ## 0.5 
-> <details>
-> <summary><b>v0.5.0 Dataset ipc refactor </b></summary> 
->
-> - Moved from in mem df to ipc cached dataset post filtering operations for fast random access of OOM dataset rows
-> - Now organise dataset & their cache under the 'name' attribute 
->
-> </details>
->
-> <details>
-> <summary><b>v0.5.1 Descriptives app </b></summary> 
->
-> - Added descriptives app, allowing CLI driven descriptives generation of specific columns across datasets
-> - Shows Polars descriptives table and relative/total frequency counts for variable bucket boundaries
-> - Calculates proportional weights for balanced training with n_buckets classes 
->
-> </details>
-> 
-> 
-> <details>
-> <summary><b>v0.5.2 Metric tracker efficiency &amp Model train checkpoint loading</b></summary>
-> 
-> - Removed redundant recall/precision calculations from best accuracy metric calc
-> - Added model checkpoint to be loaded in train loop
-> 
-> </details>
-> 
-> <details>
-> <summary><b>v0.5.3 Efficiency, Control &amp Clean update </b></summary>
-> 
-> - More efficient best accuracy calculations across a smaller range & no. of values 
-> - Train loop can load mlflow stored checkpoints & set parent run via CLI args
-> - Dataset formatting classes available via registry in CLI / config
-> - Dataset kwargs specified in CLI / config for flexible dataset initialisation
-> - Polars max threads, and compile mode determined by CLI args
-> - Learning rate scheduler args determined by config 
-> - New lowercase clean method for string columns
-> 
-> </details>
->
-> ## v0.6
-> <details>
-> <summary><b>v0.6.0 Model Eval Metric export for visualisation</b></summary>
->
-> - Dataset outputs dataclass for resilient batch access to optional fields with dot operator access
-> - Associate model outputs with input row id to categorise and measure correlation of metrics
-> - Structured JSON metric exports for modularised records
->
-> </details>
->
-> ## v0.7
-> <details>
-> <summary><b>v0.7.0 CLI &amp Config Consolidation</b></summary>
->
-> - Add config/env value overrides to train app
-> - Move code-as-config module from root to src, allow config value overrides from CLI via option flags
-> - Refactor train (main) loop into /apps
-> - Create metric tracker base class for tracking logic, overide metric calculation in children 
-> - Seperate train/data/env configs into distinct files
-> - Add dedicated loss/optimisation config for lr schedule milestones etc.
->
-> </details>
->
-> ## v1.0
-> <details>
-> <summary><b>v1.0.0 Dependency-injected experiment configs</b></summary>
->
-> - One self-contained experiment module per experiment under `src/config/experiments/` declares the full object graph
-> - Generic `Experiment[T_Batch]` dataclass holds model, strategy, tracker, plain torch DataLoaders, and checkpoint processor
-> - `Engine` owns the epoch/batch loop; `Strategy` implements `training_step`, `validation_step`, and `configure_optimizers`
-> - Typed optimizer/scheduler specs (`AdamWSpec`, `WarmupCosineSpec`) built inside the experiment file
-> - Checkpoint processor abstraction (local, MLflow, S3 stub) saves full dict checkpoints and the original experiment file as a run artifact
-> - `train` and `eval` apps rewired to load experiments; `eval` downloads the run's experiment file and rebuilds its windows
-> - Tracker rewrite: dedicated subclasses, dict CPU stores, explicit kwargs, no singleton config reads
-> - Runtime `Registry` replaced by `@component` marker + `utils.build_helper` for package `__init__` blocks
-> - basedpyright strict, Python 3.13, keyword-only constructors throughout
->
-> </details>
-
-> ## v1.1
-> <details>
-> <summary><b>v1.1.0 Migrate remaining apps + robust preprocessing + local/Modal prep</b></summary>
->
-> - Migrate `preprocess`, `describe`, and `engineer` apps to load machine settings via `config.env.load_env(...)`
-> - Add `[env]` CLI override flags to all remaining apps
-> - Remove the temporary Phase-0 `config/env.py` `__getattr__` shim
-> - Make preprocessing robust: lazy embedder loading, pluggable embedding models, CPU/CUDA support
-> - Introduce `Runtime` and `DataSource` abstractions so local and Modal execution share the same app code
->
-> </details>
-
-> ## v1.2
-> <details>
-> <summary><b>v1.2.0 Local / Modal runtime split</b></summary>
->
-> - Implement `modal` runtime backend using the abstractions from v1.1
-> - Add Modal volume-backed data sources and Modal GPU embedder
-> - Run `preprocess` with `--runtime modal` (train/eval stay local; see v2.0)
->
-> </details>
-
-> ## v1.3
-> <details>
-> <summary><b>v1.3.0 Modal runtime for describe and engineer</b></summary>
->
-> - Runtime-agnostic `DescribeJob` / `EngineerJob` pipelines under `src/data/pipeline/`, moved out of the apps
-> - `Runtime` protocol extended with `get_source`, `run_describe`, `run_engineer`; local and Modal backends implement it
-> - `describe` and `engineer` dispatch through the runtime with `--runtime modal`; no app-side runtime branching
-> - Describe and engineer run as whole CPU jobs in the shared `text-forecast-data` Modal app against the staged volume
-> - Engineer writes `metadata.json` recording the runtime that produced the dataset
->
-> </details>
-
-> ## v2.0
-> <details>
-> <summary><b>v2.0.0 Training and evaluation on Modal</b></summary>
->
-> - Experiments build from `(runtime, env)` alone; machine locations live in `[source]` config, never CLI flags
-> - Venue-independent `TrainJob` / `EvalJob` pipelines under `src/training/pipeline/`; apps are thin parse-and-delegate layers
-> - MLflow runs created client-side by the runtime wrapper and resumed in-place by `run_id`, so run naming/parenting works the same on both venues
-> - `ModalTrainingGPU` spawns fire-and-forget train/eval jobs with `.spawn()`; checkpoints land as MLflow artifacts, so a Modal-trained run resumes locally and vice versa
-> - Eval prediction exports are `exports/<year>` MLflow artifacts (downloadable from anywhere), not local directories
-> - Engine and trackers run headless (`progress=None`) inside containers
->
-> </details>
-
-</details>
+* **Shipped (v0.2 → v2.4.4):** evolved from a pre-processing/dataloader
+  prototype through the v1.x experiment-architecture and runtime-abstraction
+  releases into the current hybrid system — v2.0 brought training and
+  evaluation on Modal GPUs, v2.1 rebuilt the preprocessing pipeline on
+  ordered step specs, v2.3 added the retrieval-forecast model and vector
+  store dataset, and the v2.4 line expanded query search (candidate
+  strategies, corpus scope, compute dtypes, Gumbel sampling) plus
+  preprocess embed/tokenise fixes.
+* **Active next** (per [`plans/releases/README.md`](plans/releases/README.md)):
+  2.2 CLI launch speed (lazy heavy imports), 2.5.0 Modal runtime tidy-up and
+  preprocess resume, 2.6 production hardening, 2.7 distributed training,
+  2.8 remote progress tracking — all drafted or not yet started.
 
 # 3. Project Structure
 ```text
@@ -308,14 +111,42 @@ text-forecast/
 ```
 
 # 4. Quick start
-* Clone the repository and install the package. The `text-forecast` command is created automatically from the `pyproject.toml` console-script entry point.
+* Clone the repository and install the package with a torch extra. Torch is
+**not** a core dependency — it arrives via one of the mutually exclusive
+`cpu` / `cuda126` / `cuda130` extras (`pyproject.toml` wires these to the
+matching PyTorch wheel indexes for uv). The `text-forecast` command is
+created automatically from the console-script entry point.
+
+**CUDA (NVIDIA GPU):**
 ```bash
 git clone https://github.com/Felix-Noble/text-forecast.git
 cd text-forecast
-pip install .
+uv sync --extra cuda126   # CUDA 12.6 wheels; use --extra cuda130 for CUDA 13.0
+uv run text-forecast train -s smoke --gpu --subsample 512
 ```
 
-> For development, install in editable mode with `pip install -e .`.
+**CPU-only:**
+```bash
+git clone https://github.com/Felix-Noble/text-forecast.git
+cd text-forecast
+uv sync --extra cpu
+uv run text-forecast train -s smoke --no-gpu --subsample 512
+```
+
+**pip equivalents** (pip ignores `[tool.uv.sources]`, so point it at the
+PyTorch index explicitly):
+```bash
+# CUDA 12.6
+pip install torch --index-url https://download.pytorch.org/whl/cu126
+pip install '.[cuda126]'
+# CPU
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install '.[cpu]'
+```
+
+> For development, `uv sync --extra cpu` (or your GPU extra of choice)
+> installs the project editable; add the `dev` dependency group for pytest
+> (`uv sync --extra cpu --group dev`).
 
 * Configure `config/config.toml` with your machine settings:
 ```toml
@@ -335,9 +166,9 @@ base_dir = "/path/to/staged/data"
 default = "local"
 ```
 
-* Run the MLflow tracking server
+* Run the MLflow tracking server (mlflow is installed with the package, so
+the project venv already has it):
 ```bash
-# activate venv containing mlflow, or use uv/pipx
 mlflow server
 ```
 
@@ -364,16 +195,23 @@ text-forecast train -s resume --load-id <run-id> --load-epoch <n> --no-gpu
 
 ### On Modal
 
-Install the optional extra and fill in the `[runtime.modal]` section of
-`config/config.toml` (project, volumes, GPUs, timeout). Then preprocess,
-train, and evaluate on Modal GPUs with one flag:
+Install the optional extra (alongside a torch extra) and fill in the
+`[runtime.modal]` section of `config/config.toml` (project, volumes, GPUs,
+timeout — see `config/config.example.toml`). Then preprocess, train, and
+evaluate on Modal GPUs with one flag:
 ```bash
-pip install '.[modal]'
+# one-time: authenticate Modal locally
+modal token new
 
-text-forecast preprocess --runtime modal          # stage data onto the Modal volume
+pip install '.[modal]'   # or: uv sync --extra cuda126 --extra modal
+
+text-forecast preprocess --runtime modal --source-backend modal   # stage data onto the Modal volume
 text-forecast --experiment graph_embed_class train -s smoke --subsample 512 --runtime modal
 text-forecast eval -id <modal-run-id> -e <epoch> -s 1990-01-01 -i 1 --dry-run --runtime modal
 ```
+The modal runtime only supports the modal *source* backend, so preprocess
+must pass `--source-backend modal` (or use `--source-volume <name>`) unless
+`[source].default` in `config.toml` is already `"modal"`.
 Train jobs are spawned fire-and-forget: the CLI prints the MLflow run id and
 Modal FunctionCall id and returns immediately. Block until done with
 `modal FunctionCall.from_id(<id>).get()`, or watch the run in the MLflow UI.
