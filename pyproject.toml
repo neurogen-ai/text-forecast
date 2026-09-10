@@ -12,7 +12,7 @@ text-forecast = "main:app"
 name = 'text-forecast'
 description = 'Forecast outcomes from text corpora over time, with NLP'
 
-version = '2.4.1'
+version = '2.4.5'
 requires-python = '>=3.13,<3.14'
 
 readme = "README.md"
