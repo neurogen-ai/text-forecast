@@ -1,6 +1,6 @@
 # Changelog
 
-Completed releases for text-forecast, newest first. Structured like
+Completed releases for forecite, newest first. Structured like
 [ROADMAP.md](ROADMAP.md): majors are top-level collapsible sections, patches
 are nested inside. Only shipped versions appear here — forward plans live in
 [`plans/releases/README.md`](plans/releases/README.md).

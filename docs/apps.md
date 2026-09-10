@@ -42,23 +42,23 @@ Clean params: `--lowercase`, `--trim-min-chars <int>`, `--trim-max-sigma
 `--no-drop-quality`. See docs/data-pipeline.md for exact semantics and the
 old-level → flags mapping.
 
-Examples (all verified against `text-forecast preprocess --help`):
+Examples (all verified against `forecite preprocess --help`):
 
 ```bash
 # Quality/language clean only (equivalent to old level 1)
-text-forecast preprocess my-dataset --op "clean:text"
+forecite preprocess my-dataset --op "clean:text"
 
 # Clean + lowercase + trim short rows, drop rows null in title (old level 2+3 intent)
-text-forecast preprocess my-dataset \
+forecite preprocess my-dataset \
     --op "clean:title" --lowercase --trim-min-chars 20 --trim-max-sigma 3 \
     --op "dropna:title"
 
 # Clean two columns with per-op params: first clean lowercases, second doesn't
-text-forecast preprocess my-dataset \
+forecite preprocess my-dataset \
     --op "clean:title" --lowercase --op "clean:abstract"
 
 # Tokenise then embed on GPU via Modal
-text-forecast preprocess my-dataset --runtime modal \
+forecite preprocess my-dataset --runtime modal \
     --op "clean:text" --trim-min-chars 20 \
     --op "tokenise:text" --op-tokeniser whitespace \
     --op "embed:text,abstract" --op-embedder modernbert-base \

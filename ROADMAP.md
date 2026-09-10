@@ -1,6 +1,6 @@
 # Roadmap
 
-Forward-looking plans for text-forecast, in planned execution order. Completed
+Forward-looking plans for forecite, in planned execution order. Completed
 versions live in [CHANGELOG.md](CHANGELOG.md); the authoritative
 shipped-vs-pending status table is
 [`plans/releases/README.md`](plans/releases/README.md), and each entry below

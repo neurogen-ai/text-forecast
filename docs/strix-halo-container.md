@@ -1,4 +1,4 @@
-# text-forecast in a container on Strix Halo (uv + ROCm torch)
+# forecite in a container on Strix Halo (uv + ROCm torch)
 
 Strix Halo (Ryzen AI Max, `gfx1151`) needs ROCm 7 or newer. Official
 `torch==2.5.1` in `pyproject.toml` has no gfx1151 kernels, so this setup
@@ -43,7 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /app /app
 ENV PATH="/app/.venv/bin:$PATH" VIRTUAL_ENV=/app/.venv
 WORKDIR /app
-ENTRYPOINT ["text-forecast"]
+ENTRYPOINT ["forecite"]
 ```
 
 If you skip the `--extra rocm` route (section 2) and instead let
@@ -99,8 +99,8 @@ newer torch fine.
 ## 3. Build and run
 
 ```bash
-cd ~/projects/text-forecast
-docker build -t text-forecast:rocm .
+cd ~/projects/forecite
+docker build -t forecite:rocm .
 ```
 
 Run (the flags are the important part; they are what hands the iGPU to the
@@ -112,11 +112,11 @@ docker run --rm -it \
     --group-add video --group-add render \
     --ipc=host \
     --security-opt seccomp=unconfined \
-    -v ~/projects/text-forecast:/work \
+    -v ~/projects/forecite:/work \
     -v ~/Data:/data \
     -e HF_HOME=/data/hf-cache \
     -p 5000:5000 \
-    text-forecast:rocm bash
+    forecite:rocm bash
 ```
 
 - `/dev/kfd` + `/dev/dri` are the AMD compute + DRM nodes. The iGPU is not
@@ -156,7 +156,7 @@ With `~/Data` mounted at `/data` and `config/config.toml` pointing at it
 edits):
 
 ```bash
-text-forecast --experiment retrieval_forecast train \
+forecite --experiment retrieval_forecast train \
     -n strix-smoke --gpu --subsample 1024
 ```
 
@@ -185,6 +185,6 @@ Notes specific to this machine:
   `uv sync` (CPU, Modal dev).
 - Update deps: `uv lock --upgrade-package torch && uv sync --extra rocm`.
 - No conda involvement: delete stale `training/`, `utils/` and
-  `text-forecast*` from `~/miniconda3/lib/python3.13/site-packages` so the
-  host CLI stops shadowing; then `uv tool install -e ~/projects/text-forecast`
+  `forecite*` from `~/miniconda3/lib/python3.13/site-packages` so the
+  host CLI stops shadowing; then `uv tool install -e ~/projects/forecite`
   for a host-side CLI that uses CPU torch.

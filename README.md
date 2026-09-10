@@ -1,6 +1,6 @@
-# Text Forecast
+# Forecite
 
-Welcome to text-forecast, a CLI-based machine learning framework for
+Welcome to forecite, a CLI-based machine learning framework for
 forecasting outcomes from text corpora. It began life as a citation-impact
 predictor, but nothing in the pipeline is specific to academic papers:
 embed a text dataset, track it across time windows, train, and evaluate.
@@ -60,7 +60,7 @@ shipped releases are itemised in [CHANGELOG.md](CHANGELOG.md). In brief:
 
 # 3. Project Structure
 ```text
-text-forecast/
+forecite/
 ├── config/
 │   └── config.toml             # experiment name + [env] machine settings
 ├── plans/                      # implementation plans
@@ -107,30 +107,30 @@ text-forecast/
 ├── utils/
 │   ├── registry.py             # @component marker decorator
 │   └── build_helper.py         # regenerates package __init__.py auto blocks
-└── text-forecast                       # CLI entry point (pyproject.toml script)
+└── forecite                       # CLI entry point (pyproject.toml script)
 ```
 
 # 4. Quick start
 * Clone the repository and install the package with a torch extra. Torch is
 **not** a core dependency — it arrives via one of the mutually exclusive
 `cpu` / `cuda126` / `cuda130` extras (`pyproject.toml` wires these to the
-matching PyTorch wheel indexes for uv). The `text-forecast` command is
+matching PyTorch wheel indexes for uv). The `forecite` command is
 created automatically from the console-script entry point.
 
 **CUDA (NVIDIA GPU):**
 ```bash
-git clone https://github.com/Felix-Noble/text-forecast.git
-cd text-forecast
+git clone https://github.com/Felix-Noble/forecite.git
+cd forecite
 uv sync --extra cuda126   # CUDA 12.6 wheels; use --extra cuda130 for CUDA 13.0
-uv run text-forecast train -s smoke --gpu --subsample 512
+uv run forecite train -s smoke --gpu --subsample 512
 ```
 
 **CPU-only:**
 ```bash
-git clone https://github.com/Felix-Noble/text-forecast.git
-cd text-forecast
+git clone https://github.com/Felix-Noble/forecite.git
+cd forecite
 uv sync --extra cpu
-uv run text-forecast train -s smoke --no-gpu --subsample 512
+uv run forecite train -s smoke --no-gpu --subsample 512
 ```
 
 **pip equivalents** (pip ignores `[tool.uv.sources]`, so point it at the
@@ -174,23 +174,23 @@ mlflow server
 
 * Start a training run on CPU using the experiment selected in `config.toml`:
 ```bash
-text-forecast train -s smoke --no-gpu --subsample 512
+forecite train -s smoke --no-gpu --subsample 512
 ```
 
 * Or select an experiment explicitly on the CLI:
 ```bash
-text-forecast --experiment graph_embed_class train -s smoke --no-gpu --subsample 512
+forecite --experiment graph_embed_class train -s smoke --no-gpu --subsample 512
 ```
 
 * Evaluate a checkpoint over sliding one-year windows (exports land on the
   eval run as `exports/<year>` MLflow artifacts):
 ```bash
-text-forecast eval -id <run-id> -e <epoch> -s 1990-01-01 -i 1 --dry-run --no-gpu
+forecite eval -id <run-id> -e <epoch> -s 1990-01-01 -i 1 --dry-run --no-gpu
 ```
 
 * Resume any run from its MLflow checkpoint — including runs trained on Modal:
 ```bash
-text-forecast train -s resume --load-id <run-id> --load-epoch <n> --no-gpu
+forecite train -s resume --load-id <run-id> --load-epoch <n> --no-gpu
 ```
 
 ### On Modal
@@ -205,9 +205,9 @@ modal token new
 
 pip install '.[modal]'   # or: uv sync --extra cuda126 --extra modal
 
-text-forecast preprocess --runtime modal --source-backend modal   # stage data onto the Modal volume
-text-forecast --experiment graph_embed_class train -s smoke --subsample 512 --runtime modal
-text-forecast eval -id <modal-run-id> -e <epoch> -s 1990-01-01 -i 1 --dry-run --runtime modal
+forecite preprocess --runtime modal --source-backend modal   # stage data onto the Modal volume
+forecite --experiment graph_embed_class train -s smoke --subsample 512 --runtime modal
+forecite eval -id <modal-run-id> -e <epoch> -s 1990-01-01 -i 1 --dry-run --runtime modal
 ```
 The modal runtime only supports the modal *source* backend, so preprocess
 must pass `--source-backend modal` (or use `--source-volume <name>`) unless
