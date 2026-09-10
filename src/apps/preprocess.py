@@ -212,7 +212,7 @@ def main(
 
     Worked example:
 
-        text-forecast preprocess <origin> --op "clean:title" --lowercase \
+        forecite preprocess <origin> --op "clean:title" --lowercase \
             --trim-min-chars 20 --op "dropna:title" --op "embed:text,abstract" \
             --op-embedder modernbert-base
 

@@ -28,13 +28,13 @@ def build_runtime(runtime_name: str | None, env: Env) -> Runtime:
         except ImportError as exc:
             raise RuntimeError(
                 "The modal runtime requires the 'modal' extra: "
-                "pip install text-forecast[modal]"
+                "pip install forecite[modal]"
             ) from exc
 
         modal_config = env.runtime.get("modal", {})
         return ModalRuntime(
             env=env,
-            project=modal_config.get("project", "text-forecast"),
+            project=modal_config.get("project", "forecite"),
         )
 
     raise ValueError(

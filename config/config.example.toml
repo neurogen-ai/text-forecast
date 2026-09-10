@@ -17,7 +17,7 @@ volume = "openalex-staged"
 default = "local"
 
 [runtime.modal]
-project = "text-forecast"
+project = "forecite"
 gpu = "T4"
 python_version = "3.12"
 embedder_batch_size = 64

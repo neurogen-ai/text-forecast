@@ -93,7 +93,7 @@ preprocess_image = (
 )
 
 # Shared by the preprocess, describe, and engineer remote functions.
-MODAL_APP_NAME = "text-forecast-data"
+MODAL_APP_NAME = "forecite-data"
 
 app = modal.App(MODAL_APP_NAME)
 volume = modal.Volume.from_name(VOLUME_LABEL, create_if_missing=True)

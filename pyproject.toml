@@ -6,10 +6,10 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [project.scripts]
-text-forecast = "main:app"
+forecite = "main:app"
 
 [project]
-name = 'text-forecast'
+name = 'forecite'
 description = 'Forecast outcomes from text corpora over time, with NLP'
 
 version = '2.4.5'

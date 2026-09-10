@@ -205,6 +205,10 @@ modal token new
 
 pip install '.[modal]'   # or: uv sync --extra cuda126 --extra modal
 
+# deploy the Modal app (required for preprocess/describe/engineer — they
+# dispatch to the deployed app by name; train/eval spawn ephemeral jobs)
+modal deploy src/runtime/modal_runtime.py
+
 forecite preprocess --runtime modal --source-backend modal   # stage data onto the Modal volume
 forecite --experiment graph_embed_class train -s smoke --subsample 512 --runtime modal
 forecite eval -id <modal-run-id> -e <epoch> -s 1990-01-01 -i 1 --dry-run --runtime modal
@@ -212,6 +216,9 @@ forecite eval -id <modal-run-id> -e <epoch> -s 1990-01-01 -i 1 --dry-run --runti
 The modal runtime only supports the modal *source* backend, so preprocess
 must pass `--source-backend modal` (or use `--source-volume <name>`) unless
 `[source].default` in `config.toml` is already `"modal"`.
+Re-deploy after changing `src/` or `config/` — the deploy bakes the current
+source tree and config into the container image, and preprocess/describe/
+engineer dispatch to the deployed app by name (`forecite-data`).
 Train jobs are spawned fire-and-forget: the CLI prints the MLflow run id and
 Modal FunctionCall id and returns immediately. Block until done with
 `modal FunctionCall.from_id(<id>).get()`, or watch the run in the MLflow UI.
