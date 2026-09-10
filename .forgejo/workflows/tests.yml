@@ -1,0 +1,43 @@
+# Run the test suite on every push to main and on pull requests.
+#
+# The `ci` label routes this job to the Forgejo runner whose image is
+# node:20-bookworm (Debian 12, no preinstalled Python 3.13). Dependencies
+# therefore go through uv, which provisions a standalone CPython 3.13
+# itself (requires-python = ">=3.13,<3.14" in pyproject.toml) and installs
+# the CPU torch extra from the pinned PyTorch index. pytest resolves src/
+# via [tool.pytest.ini_options] pythonpath in pyproject.toml.
+
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    name: pytest (cpu extra)
+    runs-on: ci
+
+    env:
+      UV_PYTHON: "3.13"
+      TOKENIZERS_PARALLELISM: "false"
+
+    steps:
+      - name: Check out repository
+        uses: https://data.forgejo.org/actions/checkout@v4
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Sync dependencies (cpu extra + dev group)
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          uv sync --extra cpu --group dev
+
+      - name: Run tests
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          uv run --no-sync pytest tests/ -q --color=no
