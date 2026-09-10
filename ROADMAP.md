@@ -21,7 +21,8 @@ dry run to close out ([plan 2.1](plans/releases/archive/2.1.md)).
 > - Carries the preprocess id-skip resume remainder: sorted input glob, skip-if-empty guard, `--resume` flag (proposal v2.11)
 > - Eval dispatch clears `torch.compile` under Modal GPU snapshots, mirroring the train path (eval currently compiles unconditionally on CUDA)
 > - Tokeniser path resolved against the project root instead of CWD (containers re-download per run today); 1h preprocess timeout constraint recorded
-> - Status: drafted; implementation plan written (branches A–F), not started
+> - Gumbel random selection made user-configurable on the retrieval-forecast B model: a random-proportion knob (0–1) governing the Gumbel-random share of the candidate pool, and an exposed tau constant smoothing the draw (replacing the hardcoded `MIXED_RANDOM_RATIO`/backend-only `GUMBEL_TAU`; subsumes the rejected v2.10 random-share proposal)
+> - Status: drafted; implementation plan written (branches A–F), not started; T8 in progress on branch `v2.5-retrieval-forecastB`
 >
 > </details>
 >
