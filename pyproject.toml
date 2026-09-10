@@ -31,10 +31,9 @@ dependencies = [
 
 [project.optional-dependencies]
 modal = ["modal>=0.73.0"]
-rocm = ["torch>=2.10"]
-rocm10 = ["torch>=2.10"]
-cuda126 = ["torch"]
-cuda130 = ["torch"]
+cpu = ["torch>=2.14"]
+cuda126 = ["torch>=2.14"]
+cuda130 = ["torch>=2.14"]
 
 [dependency-groups]
 dev = ["pytest>=8.2"]
@@ -45,25 +44,19 @@ pythonpath = ["src"]
 [tool.uv]
 conflicts = [
     [
+        { extra = "cpu" },
         { extra = "cuda126" },
         { extra = "cuda130" },
-        { extra = "rocm10" },
-        { extra = "rocm" },
     ],
 ]
 
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-rocm10", extra = "rocm10" },
-    { index = "pytorch-rocm714", extra = "rocm" },
+    { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cu126", extra = "cuda126" },
     { index = "pytorch-cu130", extra = "cuda130" },
 ]
 
-triton-rocm = [
-    { index = "pytorch-rocm10", extra = "rocm10" },
-    { index = "pytorch-rocm714", extra = "rocm" },
-]
 
 [[tool.uv.index]]
 name = "pytorch-rocm10"
@@ -75,6 +68,10 @@ name = "pytorch-rocm714"
 url = "https://download.pytorch.org/whl/rocm7.14"
 explicit = true
 
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [[tool.uv.index]]
 name = "pytorch-cu126"
